@@ -18,8 +18,3 @@ int main(void)
         
     }
 }
-
-int sytem_init(void)
-{
-    
-}
