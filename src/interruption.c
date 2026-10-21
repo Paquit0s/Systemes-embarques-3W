@@ -1,174 +1,159 @@
 #include <stdio.h>
-#include "board_pins.h" /*Permet de récupérer les périphériques de com*/
-#include "main.h"
 #include <string.h>
 
-/**
- * Include des bibliothèques permettant de controler les modules :
- *  - Horloge temps réel (RTC)
- *  - Module GPS
- *  - Module lumière
- *  - Enregistreur Carte SD
- */
-
-
-
+#include "board_pins.h"
+#include "cesi_types.h"
+#include "setup.h"
 #include "grove_rtc_ds1307.h"
 #include "grove_gps_air530z.h"
 #include "grove_light.h"
 #include "sd_logger.h"
 
-// [CORRECTION] On doit définir ces variables ici car dans le fichier "board_pins.h" elles ont été définie en extern
+#define BUTTON_GPIO_PORT GPIOC
+#define BUTTON_PIN GPIO_PIN_13
+#define BUTTON_DEBOUNCE_MS 200U
 
-I2C_HandleTypeDef hi2c1;
-UART_HandleTypeDef huart1;
-UART_HandleTypeDef huart2;
-ADC_HandleTypeDef hadc1;
-SPI_HandleTypeDef hspi1;
+static volatile uint8_t acquisition_requested;
 
+static void GPIO_EXTI_Init(void);
+static void acquisition(void);
 
-
-int main(void)
+void interruption(void)
 {
+    Global_Init();
+    GPIO_EXTI_Init();
 
-    // [CORRECTION] Remplacement du nom de la fonction par le vrai type de la type de la structure (dans grove_rtc_ds1307.h)
-    // Initialisation à 0 pour éviter d'afficher des valeurs RAM aléatoires si la RTC ne répond pas
-    RTC_DateTime date_time;
+    if (!GroveRTC_Init())
+    {
+        printf("Erreur d'initialisation de l'horloge RTC.\r\n");
+    }
 
-    uint16_t light_value = 0;
-    char light_str[16]; // [CORRECTION] Chaîne intermédiaire pour pouvoir écrire "NA" en cas d'erreur capteur
-    char log_filename[16]; // [CORRECTION] Buffer pour génerer le nom du fichier AAMMJJ_0.LOG
-
-    char gps_data[100];
-    char data_line[256];
-
-    HAL_Init();
-    SystemClock_Config();
-
-    /**
-     * A définir cette partie en dessous pour la suite
-     */
-
-    MX_GPIO_Init();
-    MX_ADC1_Init();
-    MX_I2C1_Init();
-    MX_SPI1_Init();
-    MX_USART1_UART_Init();
-    MX_USART2_UART_Init();
-
-    /** 
-     * Initilisation des modules du projet
-     */
-
-    GroveRTC_Init();
     GroveGPS_Init();
     GroveLight_Init();
 
     printf("Initialisation de la carte SD...\r\n");
-
     if (!SDLogger_Init())
     {
-    printf("Carte SD absente ou impossible à initialiser.\r\n");
-    
-
-
-    /**
-     * Le programme reste bloqué si la carte SD ne peut pas être utilisée.
-     * (Note) il faudra faire clignoter la LED en rouge et en blanc selon le cahier des charges
-     */
-
-    while(1)
-    {
-    }
+        printf("Carte SD absente ou impossible à initialiser.\r\n");
+        while (1)
+        {
+        }
     }
 
-    printf("Carte SD initialisée.\r\n");
+    printf("Carte SD initialisee. Appuyez sur le bouton pour lancer une acquisition.\r\n");
 
-    while(1)
+    while (1)
     {
-        /**
-         * Lecture de la date et de l'heure depuis l'horloge RTC.
-         */
-        if (GroveRTC_GetDateTime(&date_time) != HAL_OK)
+        if (acquisition_requested != 0U)
         {
-            printf("Erreur de lecture de l'horloge RTC.\r\n");
+            __disable_irq();
+            acquisition_requested = 0U;
+            __enable_irq();
+
+            acquisition();
         }
+    }
+}
 
-        /**
-         * Lecture de la valeur brute du capteur de luminosité.
-         */
-        light_value = GroveLight_ReadRaw();
+void EXTI15_10_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(BUTTON_PIN);
+}
 
-        if (light_value == 0xFFFFU)
-        {
-            printf("Erreur de lecture du capteur de luminosité\r\n");
-            strcpy(light_str, "NA");
-        }
-        /**
-         * Lecture des données envoyées par le GPS
-         * 
-         * Le programme lit les trames reçues jusqu'à trouver une trame GGA,
-         * qui contient notamment la position géographique.
-         */
-        gps_data[0] = '\0';
-        uint8_t gps_retries = 0; // [CORRECTION] Sécurité pour éviter une boucle infinie
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    static uint32_t last_press_tick;
+    static uint8_t has_last_press;
+    uint32_t now;
 
-        do {
-            GPS_Data gps_info = {0};
-            if (!GroveGPS_ReadGGA(&gps_info, 1000U))
-            {
-                strcpy(gps_info.raw_sentence, "GPS indisponible");
-            }
-            gps_retries++; // On incrémente pour ne pas avoir une boucle infinie
-
-        // [CORRECTION] On vérifie "GPGGA" et "GNGGA" (très fréquent sur le Air530Z)
-        // On fait bien attention de sortir de la boucle au bout de 10 essaie pour ne pas faire planter le programme
-        } while (strncmp(gps_data, "$GPGGA", 6) != 0 &&
-                 strncmp(gps_data, "$GNGGA", 6) != 0 &&
-                 gps_retries < 10);
-        
-        if (gps_retries >=10)
-        {
-            strcpy(gps_data, "NA");
-        }
-    
-    
-    
-    /**
-     * Création d'une ligne regroupant toutes les données
-     * 
-     * Exemple :
-     * 14:35:12 01/01/2026 ; 1850 ; $GPGGA,....
-     */
-    
-     // [CORRECTION] Les champs de structure (second, minute, hour) s'appellent aux pluriels
-    snprintf(data_line, sizeof(data_line), "%02u:%02u:%02u %02u/%02u/%04u ; %u ; %s", date_time.hours,
-    date_time.minutes, date_time.seconds, date_time.day, date_time.month, date_time.year, light_value, gps_data);
-
-    /**
-     * Enregistrement de la ligne dans le fichier de mesures
-     */
-    
-    // [CHANGEMENT] Génération du nom du fichier au format AAMMJJ_0.LOG
-    snprintf(log_filename, sizeof(log_filename), "%02u%02u%02u_0.LOG",
-             (uint8_t)(date_time.year % 100), date_time.month, date_time.day);
-
-    if (SDLogger_WriteLine(log_filename, data_line) != HAL_OK)
+    if (GPIO_Pin != BUTTON_PIN)
     {
-        printf("Erreur lors de l'écriture\r\n");
-    } 
+        return;
+    }
+
+    now = HAL_GetTick();
+    if (has_last_press == 0U ||
+        (uint32_t)(now - last_press_tick) >= BUTTON_DEBOUNCE_MS)
+    {
+        acquisition_requested = 1U;
+        last_press_tick = now;
+        has_last_press = 1U;
+    }
+}
+
+static void acquisition(void)
+{
+    RTC_DateTime date_time = {0};
+    GPS_Data gps_info = {0};
+    uint16_t light_value;
+    char light_text[16];
+    char gps_text[sizeof(gps_info.raw_sentence)];
+    char data_line[256];
+    char log_filename[16];
+    uint8_t gps_attempt;
+
+    if (!GroveRTC_GetDateTime(&date_time))
+    {
+        printf("Erreur de lecture de l'horloge RTC.\r\n");
+    }
+
+    light_value = GroveLight_ReadRaw();
+    if (light_value == 0xFFFFU)
+    {
+        printf("Erreur de lecture du capteur de luminosite.\r\n");
+        strcpy(light_text, "NA");
+    }
     else
     {
-        /**
-         * Affichage de la même ligne dans le terminal série
-         */
-        printf("%s\r\n", data_line);
+        snprintf(light_text, sizeof(light_text), "%u", (unsigned int)light_value);
     }
 
-    // [CORRECTION] Pause entre deux mesures pour ne pas saturer la carte SD
-    // Ici 5000 ms, à remplacer par (sys_cfg.log_interval * 60000) dans la version finale
-    HAL_Delay(5000);
-
+    strcpy(gps_text, "NA");
+    for (gps_attempt = 0U; gps_attempt < 10U; gps_attempt++)
+    {
+        if (GroveGPS_ReadGGA(&gps_info, 1000U))
+        {
+            snprintf(gps_text, sizeof(gps_text), "%s", gps_info.raw_sentence);
+            break;
+        }
     }
 
-} // [CORRECTION] Fermer le main()
+    snprintf(data_line, sizeof(data_line),
+             "%02u:%02u:%02u %02u/%02u/%04u ; %s ; %s",
+             (unsigned int)date_time.hours,
+             (unsigned int)date_time.minutes,
+             (unsigned int)date_time.seconds,
+             (unsigned int)date_time.day,
+             (unsigned int)date_time.month,
+             (unsigned int)date_time.year,
+             light_text,
+             gps_text);
+
+    snprintf(log_filename, sizeof(log_filename), "%02u%02u%02u_0.LOG",
+             (unsigned int)(date_time.year % 100U),
+             (unsigned int)date_time.month,
+             (unsigned int)date_time.day);
+
+    if (!SDLogger_WriteLine(log_filename, data_line))
+    {
+        printf("Erreur lors de l'ecriture sur la carte SD.\r\n");
+        return;
+    }
+
+    printf("%s\r\n", data_line);
+}
+
+static void GPIO_EXTI_Init(void)
+{
+    GPIO_InitTypeDef gpio_init = {0};
+
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    gpio_init.Pin = BUTTON_PIN;
+    gpio_init.Mode = GPIO_MODE_IT_FALLING;
+    gpio_init.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(BUTTON_GPIO_PORT, &gpio_init);
+
+    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5U, 0U);
+    HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+}
