@@ -60,15 +60,17 @@ int main(void)
      * Initilisation des modules du projet
      */
 
-    GroveRTC_Init(&hi2c1);
-    GroveGPS_Init(&huart1);
-    GroveLight_Init(&hadc1);
+    GroveRTC_Init();
+    GroveGPS_Init();
+    GroveLight_Init();
 
     printf("Initialisation de la carte SD...\r\n");
 
-    if (SDLogger_Init(&hspi1, SD_CS_PORT, SD_CS_PIN) != HAL_OK)
+    if (!SDLogger_Init())
     {
-    printf("Carte  SD absente ou impossible à initialiser.\r\n");
+    printf("Carte SD absente ou impossible à initialiser.\r\n");
+    
+
 
     /**
      * Le programme reste bloqué si la carte SD ne peut pas être utilisée.
@@ -95,13 +97,13 @@ int main(void)
         /**
          * Lecture de la valeur brute du capteur de luminosité.
          */
-        if (GroveLight_ReadRaw(&light_value) != HAL_OK)
+        light_value = GroveLight_ReadRaw();
+
+        if (light_value == 0xFFFFU)
         {
-            printf("Erreur de lecture du capteur de luminosité.\r\n");
-            // [CORRECTION] Selon le cahier des charges ont écrit "NA" si le capteur échoue et non 0
+            printf("Erreur de lecture du capteur de luminosité\r\n");
             strcpy(light_str, "NA");
         }
-
         /**
          * Lecture des données envoyées par le GPS
          * 
@@ -112,11 +114,10 @@ int main(void)
         uint8_t gps_retries = 0; // [CORRECTION] Sécurité pour éviter une boucle infinie
 
         do {
-        
-            if (GroveGPS_ReadGGA(gps_data, sizeof(gps_data), 1000U) != HAL_OK) {
-            
-                strcpy(gps_data, "GPS indisponible");
-                break;
+            GPS_Data gps_info = {0};
+            if (!GroveGPS_ReadGGA(&gps_info, 1000U))
+            {
+                strcpy(gps_info.raw_sentence, "GPS indisponible");
             }
             gps_retries++; // On incrémente pour ne pas avoir une boucle infinie
 
