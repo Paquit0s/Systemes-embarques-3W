@@ -3,6 +3,35 @@
 
 #include "stm32l4xx_hal.h"
 
+/**
+ * Périphériques de communications :
+ *     - Ces 5 structures permettent de piloté diréctemenet les phériphériques
+ *       matériels nécessaire aux mode de fonctionnement
+ * 
+ *     - I2C :  Permet l'utilisation du bus I2C n°1, il permet de communiquer avec
+ *              l'horloge RTC, les capteurs numériques (température de l'air, hygométrie, 
+ *              pression atmoshpérique)
+ * 
+ *     - UART1/2 : Permettent d'accéder aux deux ports séries (UART)
+ *                 "huart2" gère la console série pour saisir les commandes du mode configuration
+ *                 ainsi qu'afficher les mesures en direct en mode maintenance.
+ * 
+ *                 "huart1" sert à recevoir les trames du module GPS
+ * 
+ *     - ADC : Donne accès au convertisseur analogique numérique (ADC), il sert à lire la
+ *             tension analogique du capteur de luminosité (LUMIN) seuil : 0 à 1023
+ * 
+ *     - SPI : Donne accès au bus SPI n°1, permet de piloter le module carte SD pour écrire
+ *             et archiver les fichiers de mesures
+ */
+
+extern I2C_HandleTypeDef hi2c1;
+extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef huart2;
+extern ADC_HandleTypeDef hadc1;
+extern SPI_HandleTypeDef hspi1;
+
+
 /*
  * Grove Chainable RGB LED :
  * - Port Grove D6 du shield
@@ -54,5 +83,8 @@
 #define SD_CS_PIN  GPIO_PIN_5
 
 #define SD_SPI_HANDLE hspi1
+
+
+ 
 
 #endif
