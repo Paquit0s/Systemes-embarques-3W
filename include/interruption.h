@@ -2,16 +2,12 @@
 #define INTERRUPTION_H
 
 #include <stdbool.h>
+#include "cesi_types.h"
 
-/**
- * @brief Initialise l'interruption externe (EXTI) du bouton sur PC13.
- */
-void Interruption_Init(void);
+void    Interruption_Init(void);
+void    Interruption_Update(uint32_t now_ms);
+bool    Interruption_PopEvent(Event *out);
+bool    Interruption_IsHeld(ButtonId id);   /* pour boot CONFIG */
+uint32_t Interruption_HeldMs(ButtonId id);  /* durée appui en cours */
 
-/**
- * @brief Vérifie de manière atomique si un événement bouton a eu lieu et le consomme.
- * @return true si un appui valide (anti-rebond 200 ms) a été détecté, false sinon.
- */
-bool Interruption_ConsumeButtonEvent(void);
-
-#endif /* INTERRUPTION_H */
+#endif
