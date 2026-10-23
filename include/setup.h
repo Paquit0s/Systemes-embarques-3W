@@ -2,5 +2,6 @@
 #define SETUP_H
 
 void Global_Init(void);
+void SystemClock_Config(void);
 
-#endif
+#endif /* SETUP_H */

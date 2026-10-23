@@ -3,17 +3,17 @@
 #include "stm32l4xx_hal.h"
 #include <stdio.h>
 
-#define SD_CMD0     0
-#define SD_CMD1     1
-#define SD_CMD8     8
-#define SD_CMD55    55
-#define SD_CMD58    58
-#define SD_ACMD41   41
+#define SD_CMD0   0
+#define SD_CMD1   1
+#define SD_CMD8   8
+#define SD_CMD55  55
+#define SD_CMD58  58
+#define SD_ACMD41 41
 
 #define SD_R1_IDLE_STATE      0x01U
 #define SD_R1_ILLEGAL_COMMAND 0x04U
 
-#define SD_INIT_TIMEOUT_MS 1000U
+#define SD_INIT_TIMEOUT_MS  1000U
 #define SD_POWERUP_DELAY_MS 50U
 
 typedef struct
@@ -22,8 +22,6 @@ typedef struct
     uint16_t pin;
     const char *label;
 } SDChipSelect;
-
-extern SPI_HandleTypeDef SD_SPI_HANDLE;
 
 static SDLoggerCardType g_card_type = SDLOGGER_CARD_UNKNOWN;
 static SDLoggerInitStatus g_init_status = SDLOGGER_INIT_ERR_CMD0;
@@ -306,151 +304,11 @@ const char *SDLogger_GetActiveCsLabel(void)
     return g_cs_candidates[g_active_cs_index].label;
 }
 
-/* ---------- bit-bang diagnostic ----------------------------------------- */
-
-static void SD_ReconfigPinsGPIO(void)
-{
-    GPIO_InitTypeDef gpio = {0};
-
-    /* Disable SPI1 peripheral while we take over the pins */
-    SD_SPI_HANDLE.Instance->CR1 &= ~SPI_CR1_SPE;
-
-    /* PA5 = SCK, PA7 = MOSI: push-pull outputs */
-    gpio.Pin   = GPIO_PIN_5 | GPIO_PIN_7;
-    gpio.Mode  = GPIO_MODE_OUTPUT_PP;
-    gpio.Pull  = GPIO_NOPULL;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &gpio);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* SCK idle low  */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_SET);   /* MOSI idle high */
-
-    /* PA6 = MISO: input with pull-up */
-    gpio.Pin  = GPIO_PIN_6;
-    gpio.Mode = GPIO_MODE_INPUT;
-    gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOA, &gpio);
-}
-
-static void SD_ReconfigPinsSPI(void)
-{
-    GPIO_InitTypeDef gpio = {0};
-
-    gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_7;
-    gpio.Mode      = GPIO_MODE_AF_PP;
-    gpio.Pull      = GPIO_NOPULL;
-    gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
-    gpio.Alternate = GPIO_AF5_SPI1;
-    HAL_GPIO_Init(GPIOA, &gpio);
-
-    gpio.Pin  = GPIO_PIN_6;
-    gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOA, &gpio);
-
-    SD_SPI_HANDLE.Instance->CR1 |= SPI_CR1_SPE;
-}
-
-static uint8_t SD_BitBangByte(uint8_t tx)
-{
-    uint8_t rx = 0;
-    uint8_t bit;
-
-    for (bit = 0; bit < 8U; ++bit)
-    {
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7,
-                          (tx & 0x80U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        tx <<= 1;
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);   /* rising edge  */
-        rx <<= 1;
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET)
-        {
-            rx |= 1U;
-        }
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* falling edge */
-    }
-
-    return rx;
-}
-
-bool SDLogger_BitBangCMD0Test(void)
-{
-    uint8_t i;
-    uint8_t r1 = 0xFFU;
-    GPIO_PinState cs_rb;
-
-    SD_ReconfigPinsGPIO();
-
-    /* --- GPIO self-test: verify CS output and MISO input are accessible --- */
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
-    cs_rb = HAL_GPIO_ReadPin(SD_CS_PORT, SD_CS_PIN);
-    printf("[SD bitbang] CS readback HIGH: %d (expected 1)\r\n", cs_rb);
-
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_RESET);
-    cs_rb = HAL_GPIO_ReadPin(SD_CS_PORT, SD_CS_PIN);
-    printf("[SD bitbang] CS readback LOW:  %d (expected 0)\r\n", cs_rb);
-
-    /* Raw IDR dump: GPIOA bits 5(SCK) 6(MISO) 7(MOSI), GPIOB bit 5(CS) */
-    {
-        uint32_t idr_a = GPIOA->IDR;
-        uint32_t idr_b = GPIOB->IDR;
-        printf("[SD bitbang] GPIOA IDR: SCK(5)=%lu MISO(6)=%lu MOSI(7)=%lu\r\n",
-               (idr_a >> 5U) & 1U, (idr_a >> 6U) & 1U, (idr_a >> 7U) & 1U);
-        printf("[SD bitbang] GPIOB IDR: CS(5)=%lu\r\n", (idr_b >> 5U) & 1U);
-    }
-
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
-    HAL_Delay(10U);
-
-    /* --- 80 init clocks with CS high --- */
-    for (i = 0; i < 10U; ++i)
-    {
-        (void)SD_BitBangByte(0xFFU);
-    }
-
-    /* MISO state just before CMD0 */
-    printf("[SD bitbang] MISO before CMD0: %d\r\n",
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6));
-
-    /* CS low, send CMD0 */
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_RESET);
-    (void)SD_BitBangByte(0x40U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x95U);
-
-    printf("[SD bitbang] CMD0 responses:");
-    for (i = 0; i < 10U; ++i)
-    {
-        r1 = SD_BitBangByte(0xFFU);
-        printf(" %02X", r1);
-        if ((r1 & 0x80U) == 0U)
-        {
-            break;
-        }
-    }
-    printf("\r\n");
-
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
-    (void)SD_BitBangByte(0xFFU);
-
-    SD_ReconfigPinsSPI();
-
-    if (r1 == 0x01U)
-    {
-        printf("[SD bitbang] CMD0 OK -> SPI hardware config issue\r\n");
-        return true;
-    }
-
-    printf("[SD bitbang] CMD0 still failed -> physical wiring/shield issue\r\n");
-    return false;
-}
-
 bool SDLogger_WriteLine(const char *filename, const char *line)
 {
     (void)filename;
     (void)line;
 
-    /* File write support needs FatFs + diskio SPI. */
+    /* File write support needs FatFs + diskio SPI (Phase 1 : P1-14). */
     return false;
 }

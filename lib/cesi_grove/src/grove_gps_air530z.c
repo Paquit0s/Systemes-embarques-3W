@@ -3,8 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-UART_HandleTypeDef GPS_UART_HANDLE;
-
 static double nmea_to_decimal(const char *value, const char hemisphere)
 {
     if (value == 0 || value[0] == '\0') return 0.0;
@@ -23,24 +21,9 @@ static double nmea_to_decimal(const char *value, const char hemisphere)
 void GroveGPS_Init(void)
 {
     /*
-        * Port Grove A0 : Signal1=PA0=GPS_TX, Signal2=PA1=GPS_RX.
-        * Le module Air530Z émet sur Signal1 (PA0).
-        * Pin swap UART4 activé : PA0=UART4_RX, PA1=UART4_TX.
-        * L'init GPIO est centralisée dans HAL_UART_MspInit (setup.c).
+     * L'initialisation matérielle de l'UART4 (GPS_UART_HANDLE = huart4,
+     * 9600 bauds, pin swap PA0/PA1) est désormais centralisée dans setup.c.
      */
-    GPS_UART_HANDLE.Instance = UART4;
-    GPS_UART_HANDLE.Init.BaudRate = 9600;
-    GPS_UART_HANDLE.Init.WordLength = UART_WORDLENGTH_8B;
-    GPS_UART_HANDLE.Init.StopBits = UART_STOPBITS_1;
-    GPS_UART_HANDLE.Init.Parity = UART_PARITY_NONE;
-    GPS_UART_HANDLE.Init.Mode = UART_MODE_TX_RX;
-    GPS_UART_HANDLE.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    GPS_UART_HANDLE.Init.OverSampling = UART_OVERSAMPLING_16;
-    GPS_UART_HANDLE.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-    GPS_UART_HANDLE.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_SWAP_INIT;
-    GPS_UART_HANDLE.AdvancedInit.Swap = UART_ADVFEATURE_SWAP_ENABLE;
-
-    HAL_UART_Init(&GPS_UART_HANDLE);
 }
 
 bool GroveGPS_ReadLine(char *buffer, unsigned int max_len, unsigned int timeout_ms)
@@ -90,10 +73,6 @@ bool GroveGPS_ReadGGA(GPS_Data *gps, unsigned int timeout_ms)
         strncpy(gps->raw_sentence, line, sizeof(gps->raw_sentence) - 1);
         gps->raw_sentence[sizeof(gps->raw_sentence) - 1] = '\0';
 
-        /*
-         * Format GGA :
-         * $GPGGA,time,lat,N,lon,E,fix,sats,hdop,alt,M,...
-         */
         char copy[96];
         strncpy(copy, line, sizeof(copy));
         copy[sizeof(copy) - 1] = '\0';

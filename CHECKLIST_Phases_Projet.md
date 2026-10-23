@@ -30,10 +30,10 @@
 - [x] **P0-5** Clarifier Git : `main` local en retard de 6, `origin/main` = 13 fichiers vides ; documenter la branche de référence (README ou commit).
 
 ### Architecture BSP
-- [ ] **P0-6** Inverser les responsabilités `main.c` / `interruption.c` : `main()` = init + boucle principale ; `interruption.c` = EXTI + file d'événements uniquement (supprimer le `while(1)` de `interruption()` et l'appel « programme » depuis `main`).
-- [ ] **P0-7** Centraliser les handles dans `setup.c` : déplacer `hadc1` depuis `grove_light.c`, supprimer `huart1` (jamais défini) et `huart4` (jamais initialisé) ou les utiliser ; exposer `GPS_UART_HANDLE` via le BSP/getter.
-- [ ] **P0-8** LED : ne pas réutiliser LD2/PA5 (conflit SPI1_SCK) ; signalisation sur le RGB (PA8/PB10), sinon documenter que LD2 reste inutilisée.
-- [ ] **P0-9** Retirer/sortir de `sd_logger.c` le diagnostic bit-bang PA5/PA7 (reconfigure le SCK SPI1 et le pin LED).
+- [x] **P0-6** Inverser les responsabilités `main.c` / `interruption.c` : `main()` = init + boucle principale ; `interruption.c` = EXTI + file d'événements uniquement (supprimer le `while(1)` de `interruption()` et l'appel « programme » depuis `main`).
+- [x] **P0-7** Centraliser les handles dans `setup.c` : déplacer `hadc1` depuis `grove_light.c`, supprimer `huart1` (jamais défini) et `huart4` (jamais initialisé) ou les utiliser ; exposer `GPS_UART_HANDLE` via le BSP/getter.
+- [x] **P0-8** LED : ne pas réutiliser LD2/PA5 (conflit SPI1_SCK) ; signalisation sur le RGB (PA8/PB10), sinon documenter que LD2 reste inutilisée.
+- [x] **P0-9** Retirer/sortir de `sd_logger.c` le diagnostic bit-bang PA5/PA7 (reconfigure le SCK SPI1 et le pin LED).
 
 ---
 
