@@ -29,9 +29,9 @@ typedef struct
 
 typedef struct
 {
-    float temperature_c;
-    float humidity_percent;
-    float pressure_hpa;
+    float temp;
+    float hum;
+    float press;
     float gas_resistance_ohm;
 } Env_Data;
 
