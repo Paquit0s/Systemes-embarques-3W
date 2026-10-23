@@ -35,4 +35,114 @@ typedef struct
     float gas_resistance_ohm;
 } Env_Data;
 
+/* ============================================================
+ * Ajouts Phase 1 — ne pas supprimer les types existants
+ * ============================================================ */
+
+/* --- P1-1 : Modes système --- */
+typedef enum {
+    MODE_STANDARD = 0,
+    MODE_CONFIGURATION,
+    MODE_ECO,
+    MODE_MAINTENANCE,
+    MODE_COUNT
+} ModeSysteme;
+
+/* --- P1-2 : Codes d'erreur (un par cause, + identification capteur) --- */
+typedef enum {
+    ERR_NONE = 0,
+    ERR_RTC_INIT,
+    ERR_RTC_LECTURE,
+    ERR_GPS_PAS_FIX,
+    ERR_GPS_TIMEOUT,
+    ERR_CAPTEUR_ACCES,
+    ERR_CAPTEUR_TIMEOUT,
+    ERR_CAPTEUR_INCOHERENT,
+    ERR_SD_ABSENTE,
+    ERR_SD_PLEINE,
+    ERR_SD_ECRITURE,
+    ERR_CONFIG_INVALIDE,
+    ERR_MEMOIRE_FLASH,
+    ERR_COUNT
+} CodeErreur;
+
+typedef enum {
+    CAPTEUR_AUCUN = 0,
+    CAPTEUR_BME680,
+    CAPTEUR_LIGHT,
+    CAPTEUR_GPS,
+    CAPTEUR_RTC,
+    CAPTEUR_SD
+} CapteurId;
+
+/* --- P1-4 : Statut par grandeur --- */
+typedef enum {
+    STATUT_OK = 0,
+    STATUT_NA,
+    STATUT_INCOHERENT
+} StatutMesure;
+
+/* --- P1-3 : Configuration (valeurs par défaut = spec Livrable 2) --- */
+typedef struct {
+    uint32_t log_interval_s;
+    uint32_t timeout_bme680_ms;
+    uint32_t timeout_light_ms;
+    uint32_t timeout_gps_ms;
+    uint32_t timeout_rtc_ms;
+    float    temp_min, temp_max;
+    float    hum_min, hum_max;
+    float    press_min, press_max;
+    uint16_t light_min, light_max;
+    uint32_t sd_limit_bytes;
+    uint32_t config_timeout_s;
+} Config;
+
+/* --- P1-4 : Mesure --- */
+typedef struct {
+    RTC_DateTime timestamp;
+    Env_Data     env;
+    uint16_t     light;
+    GPS_Data     gps;
+    StatutMesure statut_temp;
+    StatutMesure statut_hum;
+    StatutMesure statut_press;
+    StatutMesure statut_light;
+    StatutMesure statut_gps;
+} Mesure;
+
+/* --- P1-6/7 : Événements boutons --- */
+typedef enum {
+    EVENT_NONE = 0,
+    EVENT_BTN_PRESS,
+    EVENT_BTN_RELEASE,
+    EVENT_BTN_LONG
+} EventType;
+
+typedef enum {
+    BTN_RED = 0,    /* PC13 (existant) */
+    BTN_GREEN,      /* PA10 (à câbler) */
+    BTN_COUNT
+} ButtonId;
+
+typedef struct {
+    EventType type;
+    ButtonId  button;
+    uint32_t  tick;
+    uint32_t  duration_ms;
+} Event;
+
+/* --- P1-3 : valeurs par défaut --- */
+#define CONFIG_DEFAULTS_INIT {           \
+    .log_interval_s    = 60,             \
+    .timeout_bme680_ms = 1000,           \
+    .timeout_light_ms  = 100,            \
+    .timeout_gps_ms    = 2000,           \
+    .timeout_rtc_ms    = 100,            \
+    .temp_min = -40.0f, .temp_max = 85.0f, \
+    .hum_min  = 0.0f,   .hum_max  = 100.0f, \
+    .press_min = 300.0f, .press_max = 1100.0f, \
+    .light_min = 0, .light_max = 4095,   \
+    .sd_limit_bytes   = 1048576,         \
+    .config_timeout_s = 1800             \
+}
 #endif
