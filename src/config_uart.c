@@ -1,4 +1,5 @@
 #include "config_uart.h"
+#include "mode_manager.h"
 #include "stm32l4xx_hal.h"
 #include "board_pins.h"
 #include <stdio.h>
@@ -15,6 +16,59 @@ typedef struct {
 } FlashBlob;
 
 static Config s_cfg = CONFIG_DEFAULTS_INIT;
+
+/* =========================================================================
+ * P2-4 : Réception UART2 non bloquante par Interruption (IT) + Ring Buffer
+ * ========================================================================= */
+#define UART_RX_RING_SIZE  128U
+
+static volatile uint8_t  s_rx_ring[UART_RX_RING_SIZE];
+static volatile uint32_t s_rx_head = 0U;
+static volatile uint32_t s_rx_tail = 0U;
+static uint8_t           s_rx_byte = 0U;
+
+/**
+ * @brief Callback HAL de fin de réception d'un octet UART en mode IT (P2-4)
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        uint32_t next = (s_rx_head + 1U) % UART_RX_RING_SIZE;
+        if (next != s_rx_tail)
+        {
+            s_rx_ring[s_rx_head] = s_rx_byte;
+            s_rx_head = next;
+        }
+        /* Réarme immédiatement la réception IT de l'octet suivant */
+        (void)HAL_UART_Receive_IT(&huart2, &s_rx_byte, 1U);
+    }
+}
+
+/**
+ * @brief Callback HAL d'erreur UART : nettoie les flags (ex: Overrun) et relance l'IT
+ */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        __HAL_UART_CLEAR_NEFLAG(huart);
+        __HAL_UART_CLEAR_FEFLAG(huart);
+        (void)HAL_UART_Receive_IT(&huart2, &s_rx_byte, 1U);
+    }
+}
+
+static bool uart_ring_pop(uint8_t *out)
+{
+    if (s_rx_tail == s_rx_head)
+    {
+        return false;
+    }
+    *out = s_rx_ring[s_rx_tail];
+    s_rx_tail = (s_rx_tail + 1U) % UART_RX_RING_SIZE;
+    return true;
+}
 
 static uint32_t crc32_simple(const void *p, size_t n) {
     uint32_t h = 0x811C9DC5u;
@@ -58,7 +112,12 @@ bool ConfigUART_Save(void) {
 }
 
 void ConfigUART_Init(void) {
+    s_rx_head = 0U;
+    s_rx_tail = 0U;
     ConfigUART_Load();   /* best-effort */
+
+    /* P2-4 : Démarre l'écoute non bloquante sur interruption USART2 */
+    (void)HAL_UART_Receive_IT(&huart2, &s_rx_byte, 1U);
 }
 
 const Config* ConfigUART_Get(void) { return &s_cfg; }
@@ -68,11 +127,10 @@ const Config* ConfigUART_Get(void) { return &s_cfg; }
 /* ------------------------------------------------------------------ */
 
 #define LINE_MAX 96
-static char  s_line[LINE_MAX];
+static char   s_line[LINE_MAX];
 static size_t s_len = 0;
 
 static void print(const char *s) {
-    extern UART_HandleTypeDef huart2;
     HAL_UART_Transmit(&huart2, (uint8_t*)s, strlen(s), 100);
 }
 
@@ -113,6 +171,11 @@ static bool set_u32(const char *v, uint32_t *dst, uint32_t lo, uint32_t hi) {
     if (*end || x < lo || x > hi) return false;
     *dst = (uint32_t)x; return true;
 }
+static bool set_u16(const char *v, uint16_t *dst, uint16_t lo, uint16_t hi) {
+    char *end; unsigned long x = strtoul(v, &end, 10);
+    if (*end || x < lo || x > hi) return false;
+    *dst = (uint16_t)x; return true;
+}
 static bool set_f32(const char *v, float *dst, float lo, float hi) {
     char *end; float x = strtof(v, &end);
     if (*end || x < lo || x > hi) return false;
@@ -131,8 +194,8 @@ static bool cmd_set(const char *p, const char *v) {
     if (!strcmp(p,"hum_max"))        return set_f32(v,&s_cfg.hum_max,0.0f,100.0f);
     if (!strcmp(p,"press_min"))      return set_f32(v,&s_cfg.press_min,300.0f,1100.0f);
     if (!strcmp(p,"press_max"))      return set_f32(v,&s_cfg.press_max,300.0f,1100.0f);
-    if (!strcmp(p,"light_min"))      return set_u32(v,(uint32_t*)&s_cfg.light_min,0,4095);
-    if (!strcmp(p,"light_max"))      return set_u32(v,(uint32_t*)&s_cfg.light_max,0,4095);
+    if (!strcmp(p,"light_min"))      return set_u16(v,&s_cfg.light_min,0,4095);
+    if (!strcmp(p,"light_max"))      return set_u16(v,&s_cfg.light_max,0,4095);
     if (!strcmp(p,"sd_limit"))       return set_u32(v,&s_cfg.sd_limit_bytes,1024,0xFFFFFFFF);
     if (!strcmp(p,"config_timeout")) return set_u32(v,&s_cfg.config_timeout_s,60,86400);
     return false;
@@ -142,6 +205,9 @@ static void process_line(char *line) {
     char *save = NULL;
     char *cmd = strtok_r(line, " \t", &save);
     if (!cmd) return;
+
+    /* P2-6 : Toute commande reçue en mode CONFIGURATION réinitialise le timer de 30 min */
+    ModeManager_NotifyActivity();
 
     if (!strcasecmp(cmd,"HELP")) { print_help(); return; }
     if (!strcasecmp(cmd,"SAVE")) {
@@ -163,18 +229,22 @@ static void process_line(char *line) {
     print("ERR commande inconnue\r\n");
 }
 
-/* À appeler depuis la boucle principale ; réception octet par octet
- * (peut être améliorée en IT/DMA en Phase 2). */
+/**
+ * @brief Dépile le ring buffer alimenté par l'interruption USART2 (P2-4)
+ *        Aucun appel bloquant HAL_UART_Receive n'est effectué dans la boucle principale.
+ */
 void ConfigUART_Process(void) {
-    extern UART_HandleTypeDef huart2;
     uint8_t c;
-    while (HAL_UART_Receive(&huart2, &c, 1, 0) == HAL_OK) {
+    while (uart_ring_pop(&c)) {
+        /* P2-6 : Signale l'activité console pour maintenir le mode CONFIGURATION */
+        ModeManager_NotifyActivity();
+
         if (c == '\r') continue;
         if (c == '\n') {
             s_line[s_len] = '\0';
             if (s_len) process_line(s_line);
             s_len = 0;
-        } else if (s_len < LINE_MAX-1) {
+        } else if (s_len < LINE_MAX - 1) {
             s_line[s_len++] = (char)c;
         }
     }

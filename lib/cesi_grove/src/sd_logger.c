@@ -1,20 +1,26 @@
 #include "sd_logger.h"
 #include "board_pins.h"
+#include "setup.h"
 #include "stm32l4xx_hal.h"
 #include <stdio.h>
 
 #define SD_CMD0   0
 #define SD_CMD1   1
 #define SD_CMD8   8
+#define SD_CMD16  16
 #define SD_CMD55  55
 #define SD_CMD58  58
+#define SD_CMD59  59
 #define SD_ACMD41 41
 
 #define SD_R1_IDLE_STATE      0x01U
 #define SD_R1_ILLEGAL_COMMAND 0x04U
 
-#define SD_INIT_TIMEOUT_MS  1000U
-#define SD_POWERUP_DELAY_MS 50U
+/* P2-2 : Timeouts d'initialisation adaptés au standard SD SPI */
+#define SD_INIT_TIMEOUT_MS    1500U
+#define SD_WAIT_READY_MS      500U
+#define SD_SPI_XFER_TIMEOUT   100U
+#define SD_POWERUP_DELAY_MS   50U
 
 typedef struct
 {
@@ -36,7 +42,7 @@ static const SDChipSelect g_cs_candidates[] = {
 static uint8_t SD_SPI_Transfer(uint8_t tx)
 {
     uint8_t rx = 0xFF;
-    (void)HAL_SPI_TransmitReceive(&SD_SPI_HANDLE, &tx, &rx, 1, 100);
+    (void)HAL_SPI_TransmitReceive(&SD_SPI_HANDLE, &tx, &rx, 1, SD_SPI_XFER_TIMEOUT);
     return rx;
 }
 
@@ -81,6 +87,31 @@ static bool SD_WaitReady(uint32_t timeout_ms)
     return false;
 }
 
+/**
+ * @brief Calcul CRC-7 (polynôme G(x) = x^7 + x^3 + 1 -> 0x09) + bit de fin à 1
+ *        Utilisé pour sécuriser les commandes SPI SD lorsque CMD59 (CRC_ON_OFF) est utilisé (P2-2).
+ */
+static uint8_t SD_ComputeCRC7(const uint8_t *data, uint8_t len)
+{
+    uint8_t crc = 0;
+    uint8_t i, bit;
+
+    for (i = 0; i < len; ++i)
+    {
+        uint8_t d = data[i];
+        for (bit = 0; bit < 8U; ++bit)
+        {
+            crc <<= 1;
+            if (((d ^ crc) & 0x80U) != 0U)
+            {
+                crc ^= 0x09U;
+            }
+            d <<= 1;
+        }
+    }
+    return (uint8_t)((crc << 1) | 0x01U);
+}
+
 static uint8_t SD_SendCommand(uint8_t cmd, uint32_t arg, uint8_t crc)
 {
     uint8_t response = 0xFF;
@@ -92,7 +123,7 @@ static uint8_t SD_SendCommand(uint8_t cmd, uint32_t arg, uint8_t crc)
 
     if (cmd != SD_CMD0)
     {
-        if (!SD_WaitReady(50U))
+        if (!SD_WaitReady(SD_WAIT_READY_MS))
         {
             SD_Deselect();
             return 0xFF;
@@ -104,7 +135,7 @@ static uint8_t SD_SendCommand(uint8_t cmd, uint32_t arg, uint8_t crc)
     frame[2] = (uint8_t)(arg >> 16);
     frame[3] = (uint8_t)(arg >> 8);
     frame[4] = (uint8_t)(arg);
-    frame[5] = crc;
+    frame[5] = (crc != 0x01U) ? crc : SD_ComputeCRC7(frame, 5U);
 
     for (i = 0; i < 6; ++i)
     {
@@ -139,12 +170,15 @@ bool SDLogger_Init(void)
     g_card_type = SDLOGGER_CARD_UNKNOWN;
     g_init_status = SDLOGGER_INIT_ERR_CMD0;
 
+    /* P2-2 : Basse fréquence SPI pendant l'initialisation (<= 400 kHz : 80 MHz / 256 = 312.5 kHz) */
+    (void)BSP_SPI1_SetPrescaler(SPI_BAUDRATEPRESCALER_256);
+
     for (cs_index = 0; cs_index < SD_CS_CANDIDATE_COUNT; ++cs_index)
     {
         SD_SetActiveChipSelect(cs_index);
         SD_Deselect();
 
-        printf("[SD diag] try CS %s\r\n", g_cs_candidates[cs_index].label);
+        printf("[SD diag] try CS %s (SPI init <= 400 kHz)\r\n", g_cs_candidates[cs_index].label);
 
         HAL_Delay(SD_POWERUP_DELAY_MS);
 
@@ -197,6 +231,15 @@ bool SDLogger_Init(void)
         {
             g_init_status = SDLOGGER_INIT_ERR_CMD0;
             printf("[SD diag] CMD0 failed on %s\r\n", g_cs_candidates[cs_index].label);
+            continue;
+        }
+
+        /* P2-2 : CMD59 (CRC_ON_OFF) - Activation de la vérification CRC en mode SPI */
+        r1 = SD_SendCommand(SD_CMD59, 0x00000001UL, 0x01U);
+        SD_Deselect();
+        if ((r1 != SD_R1_IDLE_STATE) && ((r1 & SD_R1_ILLEGAL_COMMAND) == 0U))
+        {
+            g_init_status = SDLOGGER_INIT_ERR_CMD59;
             continue;
         }
 
@@ -256,6 +299,25 @@ bool SDLogger_Init(void)
             SD_Deselect();
 
             g_card_type = ((ocr[0] & 0x40U) != 0U) ? SDLOGGER_CARD_SDHC : SDLOGGER_CARD_SDSC;
+
+            /* P2-2 : CMD16 (SET_BLOCKLEN = 512 octets) requis pour les cartes SDSC */
+            if (g_card_type == SDLOGGER_CARD_SDSC)
+            {
+                r1 = SD_SendCommand(SD_CMD16, 512UL, 0x01U);
+                SD_Deselect();
+                if (r1 != 0x00U)
+                {
+                    g_init_status = SDLOGGER_INIT_ERR_CMD16;
+                    continue;
+                }
+            }
+
+            /* P2-2 : Désactiver CMD59 pour les transferts de données bruts si souhaité,
+             * puis basculer le bus SPI à haute vitesse (5 MHz @ 80 MHz = PRESCALER_16) */
+            (void)SD_SendCommand(SD_CMD59, 0x00000000UL, 0x01U);
+            SD_Deselect();
+            (void)BSP_SPI1_SetPrescaler(SPI_BAUDRATEPRESCALER_16);
+
             g_init_status = SDLOGGER_INIT_OK;
             return true;
         }
@@ -276,6 +338,19 @@ bool SDLogger_Init(void)
             SD_Deselect();
             if (r1 == 0x00U)
             {
+                /* P2-2 : CMD16 (SET_BLOCKLEN = 512 octets) obligatoire sur carte SDSC v1 */
+                r1 = SD_SendCommand(SD_CMD16, 512UL, 0x01U);
+                SD_Deselect();
+                if (r1 != 0x00U)
+                {
+                    g_init_status = SDLOGGER_INIT_ERR_CMD16;
+                    break;
+                }
+
+                (void)SD_SendCommand(SD_CMD59, 0x00000000UL, 0x01U);
+                SD_Deselect();
+                (void)BSP_SPI1_SetPrescaler(SPI_BAUDRATEPRESCALER_16);
+
                 g_card_type = SDLOGGER_CARD_SDSC;
                 g_init_status = SDLOGGER_INIT_OK;
                 return true;
@@ -283,7 +358,10 @@ bool SDLogger_Init(void)
         }
         while ((HAL_GetTick() - start) < SD_INIT_TIMEOUT_MS);
 
-        g_init_status = SDLOGGER_INIT_ERR_CMD1_TIMEOUT;
+        if (g_init_status != SDLOGGER_INIT_ERR_CMD16)
+        {
+            g_init_status = SDLOGGER_INIT_ERR_CMD1_TIMEOUT;
+        }
     }
 
     return false;
