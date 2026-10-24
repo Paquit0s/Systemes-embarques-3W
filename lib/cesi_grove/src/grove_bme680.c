@@ -1,70 +1,279 @@
 #include "grove_bme680.h"
 #include "board_pins.h"
+#include <string.h>
 
-extern I2C_HandleTypeDef GROVE_I2C_HANDLE;
+#define BME680_ADDR_PRIMARY    (0x76U << 1)
+#define BME680_ADDR_SECONDARY  (0x77U << 1)
 
-#define BME680_ADDR_DEFAULT (0x76 << 1)
-#define BME680_REG_ID      0xD0
-#define BME680_REG_RESET   0xE0
+#define BME680_REG_STATUS      0x1DU
+#define BME680_REG_PRESS_MSB   0x1FU
+#define BME680_REG_CTRL_GAS_1  0x71U
+#define BME680_REG_CTRL_HUM    0x72U
+#define BME680_REG_CTRL_MEAS   0x74U
+#define BME680_REG_CONFIG      0x75U
+#define BME680_REG_CALIB_1     0x89U
+#define BME680_REG_ID          0xD0U
+#define BME680_REG_RESET       0xE0U
+#define BME680_REG_CALIB_2     0xE1U
 
-static uint16_t bme680_addr = BME680_ADDR_DEFAULT;
+#define BME680_CHIP_ID         0x61U
+#define BME680_SOFT_RESET_CMD  0xB6U
+#define BME680_NEW_DATA_MSK    0x80U
+
+typedef struct
+{
+    uint16_t par_t1;
+    int16_t  par_t2;
+    int8_t   par_t3;
+
+    uint16_t par_p1;
+    int16_t  par_p2;
+    int8_t   par_p3;
+    int16_t  par_p4;
+    int16_t  par_p5;
+    int8_t   par_p6;
+    int8_t   par_p7;
+    int16_t  par_p8;
+    int16_t  par_p9;
+    uint8_t  par_p10;
+
+    uint16_t par_h1;
+    uint16_t par_h2;
+    int8_t   par_h3;
+    int8_t   par_h4;
+    int8_t   par_h5;
+    uint8_t  par_h6;
+    int8_t   par_h7;
+} BME680_CalibData;
+
+static uint16_t         s_bme_addr     = BME680_ADDR_PRIMARY;
+static bool             s_calib_loaded = false;
+static BME680_CalibData s_calib;
 
 static bool read_reg(uint8_t reg, uint8_t *data, uint16_t len)
 {
-    if (HAL_I2C_Master_Transmit(&GROVE_I2C_HANDLE, bme680_addr, &reg, 1, 100) != HAL_OK)
-        return false;
-
-    return HAL_I2C_Master_Receive(&GROVE_I2C_HANDLE, bme680_addr, data, len, 100) == HAL_OK;
+    return HAL_I2C_Mem_Read(&GROVE_I2C_HANDLE,
+                            s_bme_addr,
+                            reg,
+                            I2C_MEMADD_SIZE_8BIT,
+                            data,
+                            len,
+                            100U) == HAL_OK;
 }
 
 static bool write_reg(uint8_t reg, uint8_t value)
 {
-    uint8_t data[2] = {reg, value};
-    return HAL_I2C_Master_Transmit(&GROVE_I2C_HANDLE, bme680_addr, data, 2, 100) == HAL_OK;
+    return HAL_I2C_Mem_Write(&GROVE_I2C_HANDLE,
+                             s_bme_addr,
+                             reg,
+                             I2C_MEMADD_SIZE_8BIT,
+                             &value,
+                             1U,
+                             100U) == HAL_OK;
+}
+
+static bool read_calibration_data(void)
+{
+    uint8_t c1[25] = {0};
+    uint8_t c2[10] = {0};
+
+    if (!read_reg(BME680_REG_CALIB_1, c1, sizeof(c1)))
+    {
+        return false;
+    }
+    if (!read_reg(BME680_REG_CALIB_2, c2, sizeof(c2)))
+    {
+        return false;
+    }
+
+    /* Coefficients température */
+    s_calib.par_t1 = (uint16_t)(((uint16_t)c2[9] << 8) | c2[8]);
+    s_calib.par_t2 = (int16_t)(((uint16_t)c1[2] << 8) | c1[1]);
+    s_calib.par_t3 = (int8_t)c1[3];
+
+    /* Coefficients pression */
+    s_calib.par_p1  = (uint16_t)(((uint16_t)c1[6] << 8) | c1[5]);
+    s_calib.par_p2  = (int16_t)(((uint16_t)c1[8] << 8) | c1[7]);
+    s_calib.par_p3  = (int8_t)c1[9];
+    s_calib.par_p4  = (int16_t)(((uint16_t)c1[12] << 8) | c1[11]);
+    s_calib.par_p5  = (int16_t)(((uint16_t)c1[14] << 8) | c1[13]);
+    s_calib.par_p7  = (int8_t)c1[15];
+    s_calib.par_p6  = (int8_t)c1[16];
+    s_calib.par_p8  = (int16_t)(((uint16_t)c1[20] << 8) | c1[19]);
+    s_calib.par_p9  = (int16_t)(((uint16_t)c1[22] << 8) | c1[21]);
+    s_calib.par_p10 = c1[23];
+
+    /* Coefficients humidité */
+    s_calib.par_h1 = (uint16_t)(((uint16_t)c2[2] << 4) | (c2[1] & 0x0FU));
+    s_calib.par_h2 = (uint16_t)(((uint16_t)c2[0] << 4) | (c2[1] >> 4));
+    s_calib.par_h3 = (int8_t)c2[3];
+    s_calib.par_h4 = (int8_t)c2[4];
+    s_calib.par_h5 = (int8_t)c2[5];
+    s_calib.par_h6 = c2[6];
+    s_calib.par_h7 = (int8_t)c2[7];
+
+    return true;
 }
 
 bool GroveBME680_ReadChipId(uint8_t *chip_id)
 {
-    if (chip_id == 0) return false;
-    return read_reg(BME680_REG_ID, chip_id, 1);
+    if (chip_id == NULL)
+    {
+        return false;
+    }
+    return read_reg(BME680_REG_ID, chip_id, 1U);
 }
 
 bool GroveBME680_Init(void)
 {
-    /*
-     * BME680 standard chip ID = 0x61.
-     * Adresse Seeed : 0x76 par défaut, parfois 0x77.
-     */
-    uint8_t id = 0;
+    uint8_t id = 0U;
+    s_calib_loaded = false;
 
-    bme680_addr = (0x76 << 1);
-    if (GroveBME680_ReadChipId(&id) && id == 0x61)
-        return true;
+    /* Test de l'adresse I2C 0x76 (Seeed Grove par défaut) puis 0x77 */
+    s_bme_addr = BME680_ADDR_PRIMARY;
+    if (!GroveBME680_ReadChipId(&id) || id != BME680_CHIP_ID)
+    {
+        s_bme_addr = BME680_ADDR_SECONDARY;
+        if (!GroveBME680_ReadChipId(&id) || id != BME680_CHIP_ID)
+        {
+            return false;
+        }
+    }
 
-    bme680_addr = (0x77 << 1);
-    if (GroveBME680_ReadChipId(&id) && id == 0x61)
-        return true;
+    /* Soft reset + attente courte de démarrage interne (5 ms) */
+    (void)write_reg(BME680_REG_RESET, BME680_SOFT_RESET_CMD);
+    uint32_t t0 = HAL_GetTick();
+    while ((HAL_GetTick() - t0) < 5U) {}
 
-    return false;
+    if (!read_calibration_data())
+    {
+        return false;
+    }
+
+    /* Désactivation du chauffage gaz pour ne pas biaiser T/HR */
+    if (!write_reg(BME680_REG_CTRL_GAS_1, 0x00U))
+    {
+        return false;
+    }
+
+    /* Filtre IIR coeff 3 (bits 4:2 = 010) */
+    if (!write_reg(BME680_REG_CONFIG, (uint8_t)(0x02U << 2)))
+    {
+        return false;
+    }
+
+    s_calib_loaded = true;
+    return true;
 }
 
 bool GroveBME680_ReadEnvironment(Env_Data *data)
 {
-    if (data == 0) return false;
+    if (data == NULL)
+    {
+        return false;
+    }
 
-    /*
-     * Placeholder volontaire.
-     *
-     * Le BME680 ne fournit pas directement des valeurs température/humidité/pression lisibles.
-     * Il faut :
-     * 1. lire les coefficients de calibration,
-     * 2. configurer oversampling et mode forced,
-     * 3. lire les mesures brutes,
-     * 4. appliquer les compensations Bosch.
-     */
-    data->temperature_c = 20.0f;
-    data->humidity_percent = 50.0f;
-    data->pressure_hpa = 1013.25f;
+    if (!s_calib_loaded)
+    {
+        if (!GroveBME680_Init())
+        {
+            return false;
+        }
+    }
+
+    /* 1. Oversampling humidité x2 (0x02), température x8 (0x04), pression x4 (0x03) + Forced Mode (0x01) */
+    if (!write_reg(BME680_REG_CTRL_HUM, 0x02U))
+    {
+        s_calib_loaded = false;
+        return false;
+    }
+
+    uint8_t ctrl_meas = (uint8_t)((0x04U << 5) | (0x03U << 2) | 0x01U);
+    if (!write_reg(BME680_REG_CTRL_MEAS, ctrl_meas))
+    {
+        s_calib_loaded = false;
+        return false;
+    }
+
+    /* 2. Attente de fin de conversion (new_data_0, typ. ~25 ms, max 100 ms) */
+    uint32_t t0 = HAL_GetTick();
+    uint8_t status = 0U;
+    bool ready = false;
+    while ((HAL_GetTick() - t0) < 100U)
+    {
+        if (!read_reg(BME680_REG_STATUS, &status, 1U))
+        {
+            s_calib_loaded = false;
+            return false;
+        }
+        if ((status & BME680_NEW_DATA_MSK) != 0U)
+        {
+            ready = true;
+            break;
+        }
+    }
+
+    if (!ready)
+    {
+        return false;
+    }
+
+    /* 3. Lecture groupée des registres ADC bruts (0x1F .. 0x26 : P, T, H) */
+    uint8_t raw[8] = {0};
+    if (!read_reg(BME680_REG_PRESS_MSB, raw, sizeof(raw)))
+    {
+        s_calib_loaded = false;
+        return false;
+    }
+
+    uint32_t press_adc = ((uint32_t)raw[0] << 12) | ((uint32_t)raw[1] << 4) | ((uint32_t)raw[2] >> 4);
+    uint32_t temp_adc  = ((uint32_t)raw[3] << 12) | ((uint32_t)raw[4] << 4) | ((uint32_t)raw[5] >> 4);
+    uint16_t hum_adc   = (uint16_t)(((uint16_t)raw[6] << 8) | raw[7]);
+
+    /* 4. Formules de compensation flottantes officielles Bosch BME680 (P1-11) */
+    /* Température (°C) */
+    float var1 = (((float)temp_adc / 16384.0f) - ((float)s_calib.par_t1 / 1024.0f)) * (float)s_calib.par_t2;
+    float diff = ((float)temp_adc / 131072.0f) - ((float)s_calib.par_t1 / 8192.0f);
+    float var2 = (diff * diff) * ((float)s_calib.par_t3 * 16.0f);
+    float t_fine = var1 + var2;
+    float calc_temp = t_fine / 5120.0f;
+
+    /* Pression (Pa -> hPa) */
+    float p_var1 = (t_fine / 2.0f) - 64000.0f;
+    float p_var2 = p_var1 * p_var1 * ((float)s_calib.par_p6 / 131072.0f);
+    p_var2 = p_var2 + (p_var1 * (float)s_calib.par_p5 * 2.0f);
+    p_var2 = (p_var2 / 4.0f) + ((float)s_calib.par_p4 * 65536.0f);
+    p_var1 = ((((float)s_calib.par_p3 * p_var1 * p_var1) / 16384.0f) + ((float)s_calib.par_p2 * p_var1)) / 524288.0f;
+    p_var1 = (1.0f + (p_var1 / 32768.0f)) * (float)s_calib.par_p1;
+
+    float calc_pres_hpa = 0.0f;
+    if (p_var1 != 0.0f)
+    {
+        float calc_pres = 1048576.0f - (float)press_adc;
+        calc_pres = ((calc_pres - (p_var2 / 4096.0f)) * 6250.0f) / p_var1;
+        p_var1 = ((float)s_calib.par_p9 * calc_pres * calc_pres) / 2147483648.0f;
+        p_var2 = calc_pres * ((float)s_calib.par_p8 / 32768.0f);
+        float p_div = calc_pres / 256.0f;
+        float p_var3 = p_div * p_div * p_div * ((float)s_calib.par_p10 / 131072.0f);
+        calc_pres = calc_pres + (p_var1 + p_var2 + p_var3 + ((float)s_calib.par_p7 * 128.0f)) / 16.0f;
+        calc_pres_hpa = calc_pres / 100.0f;
+    }
+
+    /* Humidité (%HR) */
+    float h_var1 = (float)hum_adc - (((float)s_calib.par_h1 * 16.0f) + (((float)s_calib.par_h3 / 2.0f) * calc_temp));
+    float h_var2 = h_var1 * (((float)s_calib.par_h2 / 262144.0f) *
+                   (1.0f + (((float)s_calib.par_h4 / 16384.0f) * calc_temp) +
+                    (((float)s_calib.par_h5 / 1048576.0f) * calc_temp * calc_temp)));
+    float h_var3 = (float)s_calib.par_h6 / 16384.0f;
+    float h_var4 = (float)s_calib.par_h7 / 2097152.0f;
+    float calc_hum = h_var2 + ((h_var3 + (h_var4 * calc_temp)) * h_var2 * h_var2);
+
+    if (calc_hum < 0.0f)   calc_hum = 0.0f;
+    if (calc_hum > 100.0f) calc_hum = 100.0f;
+
+    data->temp               = calc_temp;
+    data->hum                = calc_hum;
+    data->press              = calc_pres_hpa;
     data->gas_resistance_ohm = 0.0f;
 
     return true;

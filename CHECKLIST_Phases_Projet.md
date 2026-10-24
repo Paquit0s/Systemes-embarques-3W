@@ -40,32 +40,32 @@
 ## Phase 1 — Socle applicatif 🟠
 
 ### Types & contrats
-- [ ] **P1-1** `ModeSysteme` (STANDARD / CONFIGURATION / ECO / MAINTENANCE) dans `cesi_types.h`.
-- [ ] **P1-2** `CodeErreur` complet (RTC, GPS, ACCES_CAPTEUR, CAPTEUR_INCOHERENT, SD_PLEINE, SD_ECRITURE, CONFIG_INVALIDE, MEMOIRE) + identification du capteur concerné.
-- [ ] **P1-3** `Config` (LOG_INTERVAL, TIMEOUT par capteur, seuils, limite SD) avec unités, domaines, valeurs par défaut.
-- [ ] **P1-4** `Mesure` (horodatage, T/HR/P, lumière, lat/lon, statut par grandeur) ; supprimer le doublon validité/erreur ; corriger `pressionv`.
-- [ ] **P1-5** Créer les en-têtes des modules : `mode_manager.h`, `capteur_manager.h`, `stockage.h`, `config_uart.h`, `led_control.h`.
+- [x] **P1-1** `ModeSysteme` (STANDARD / CONFIGURATION / ECO / MAINTENANCE) dans `cesi_types.h`.
+- [x] **P1-2** `CodeErreur` complet (RTC, GPS, ACCES_CAPTEUR, CAPTEUR_INCOHERENT, SD_PLEINE, SD_ECRITURE, CONFIG_INVALIDE, MEMOIRE) + identification du capteur concerné.
+- [x] **P1-3** `Config` (LOG_INTERVAL, TIMEOUT par capteur, seuils, limite SD) avec unités, domaines, valeurs par défaut.
+- [x] **P1-4** `Mesure` (horodatage, T/HR/P, lumière, lat/lon, statut par grandeur) ; supprimer le doublon validité/erreur ; corriger `pressionv`.
+- [x] **P1-5** Créer les en-têtes des modules : `mode_manager.h`, `capteur_manager.h`, `stockage.h`, `config_uart.h`, `led_control.h`.
 
 ### Événements & modes
-- [ ] **P1-6** Deux boutons (rouge/vert) : pins définitifs (PA10/PB3 ou PC13 + un autre), EXTI, file d'événements horodatés.
-- [ ] **P1-7** Anti-rebond centralisé (20–50 ms), événements `APPUI` / `RELACHE`, mesure de la durée d'appui.
-- [ ] **P1-8** `mode_manager` : machine à états complète (dont ECO→STANDARD, sortie CONFIGURATION, MAINTENANCE→mode précédent) + timings `HAL_GetTick()`.
-- [ ] **P1-9** `led_control` : mapping mode → couleur (vert/jaune/bleu/orange) + erreurs (séquences), priorité erreurs, aucun blocage.
+- [x] **P1-6** Deux boutons (rouge/vert) : pins définitifs (PA10/PB3 ou PC13 + un autre), EXTI, file d'événements horodatés.
+- [x] **P1-7** Anti-rebond centralisé (20–50 ms), événements `APPUI` / `RELACHE`, mesure de la durée d'appui.
+- [x] **P1-8** `mode_manager` : machine à états complète (dont ECO→STANDARD, sortie CONFIGURATION, MAINTENANCE→mode précédent) + timings `HAL_GetTick()`.
+- [x] **P1-9** `led_control` : mapping mode → couleur (vert/jaune/bleu/orange) + erreurs (séquences), priorité erreurs, aucun blocage.
 
 ### Acquisition & stockage
-- [ ] **P1-10** `capteur_manager` : RTC + lumière + BME680 + GPS, timeouts par capteur, 2 timeouts consécutifs → erreur, seuils → `Mesure`.
-- [ ] **P1-11** BME680 réel : lecture coefficients de calibration + oversampling + mode forcé + compensation Bosch (remplacer le placeholder 20 °C / 50 % / 1013,25 hPa).
+- [x] **P1-10** `capteur_manager` : RTC + lumière + BME680 + GPS, timeouts par capteur, 2 timeouts consécutifs → erreur, seuils → `Mesure`.
+- [x] **P1-11** BME680 réel : lecture coefficients de calibration + oversampling + mode forcé + compensation Bosch (remplacer le placeholder 20 °C / 50 % / 1013,25 hPa).
 - [ ] **P1-12** GPS : ring buffer UART, parsing GGA complet (UTC, fix, satellites, lat/lon), statut retourné par `GroveGPS_Init`.
-- [ ] **P1-13** RTC : contrôle du bit CH, mise à l'heure, politique d'erreur (arrêt ou poursuite — trancher), `HAL_I2C_Mem_Read/Write`.
-- [ ] **P1-14** `stockage` : FatFs (présent dans le framework) + `diskio` SPI + CSV (en-tête, unités, horodatage) + nommage/rotation + flush ; **remplacer `SDLogger_WriteLine` (stub)**.
-- [ ] **P1-15** Archivage : limite de fichier (octets ou lignes), stratégie (renommer/supprimer), comportement si carte absente/pleine.
-- [ ] **P1-16** `config_uart` : commandes (`SET`/`GET`/`HELP`/`SAVE`), validation syntaxe/domaine, confirmation/erreurs, persistance **flash** (pas d'EEPROM sur L476).
-- [ ] **P1-17** `main` : init + ordonnanceur coopératif (aucun `HAL_Delay` en boucle), acquisition périodique selon `LOG_INTERVAL`, UART non bloquante.
+- [x] **P1-13** RTC : contrôle du bit CH, mise à l'heure, politique d'erreur (arrêt ou poursuite — trancher), `HAL_I2C_Mem_Read/Write`.
+- [x] **P1-14** `stockage` : FatFs (présent dans le framework) + `diskio` SPI + CSV (en-tête, unités, horodatage) + nommage/rotation + flush ; **remplacer `SDLogger_WriteLine` (stub)**.
+- [x] **P1-15** Archivage : limite de fichier (octets ou lignes), stratégie (renommer/supprimer), comportement si carte absente/pleine.
+- [x] **P1-16** `config_uart` : commandes (`SET`/`GET`/`HELP`/`SAVE`), validation syntaxe/domaine, confirmation/erreurs, persistance **flash** (pas d'EEPROM sur L476).
+- [x] **P1-17** `main` : init + ordonnanceur coopératif (aucun `HAL_Delay` en boucle), acquisition périodique selon `LOG_INTERVAL`, UART non bloquante.
 
 ### Intégration
-- [ ] **P1-18** Acquisition périodique réelle en mode STANDARD (le bouton ne doit plus déclencher une mesure unique).
-- [ ] **P1-19** Ligne de log complète : RTC + T/HR/P + lumière + GPS parsé (ou `NA`), pas la trame brute.
-- [ ] **P1-20** Signalisation LED + console des erreurs, conforme à la table du livrable.
+- [x] **P1-18** Acquisition périodique réelle en mode STANDARD (le bouton ne doit plus déclencher une mesure unique).
+- [x] **P1-19** Ligne de log complète : RTC + T/HR/P + lumière + GPS parsé (ou `NA`), pas la trame brute.
+- [x] **P1-20** Signalisation LED + console des erreurs, conforme à la table du livrable.
 
 ---
 
