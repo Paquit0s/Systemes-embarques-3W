@@ -4,10 +4,11 @@
 #include <stdbool.h>
 #include "cesi_types.h"
 
-void ConfigUART_Init(void);
-void ConfigUART_Process(void);      /* à appeler depuis la boucle principale */
+void          ConfigUART_Init(void);
+void          ConfigUART_Process(void);      /* à appeler depuis la boucle principale */
+void          ConfigUART_FlushInput(void);   /* vide le ring buffer RX à l'entrée en CONFIG */
 const Config* ConfigUART_Get(void);
-bool ConfigUART_Save(void);         /* écriture flash */
-bool ConfigUART_Load(void);         /* lecture flash au boot */
+bool          ConfigUART_Save(void);         /* écriture flash */
+bool          ConfigUART_Load(void);         /* lecture flash au boot */
 
 #endif

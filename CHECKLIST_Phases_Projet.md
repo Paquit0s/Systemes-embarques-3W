@@ -1,6 +1,6 @@
 # Checklist — travail restant (Projet 3W, Équipe 7)
 
-> **État de référence : 21/10/2026 14:20** — HEAD `flo b8a751d` + modifications locales en cours.
+> **État de référence : 24/10/2026 23:40** — Branche `paquito/phase-2` : **43/72 cases cochées** (Phase 0 : 9/9 · Phase 1 : 20/20 · Phase 2 : 6/7).
 > ⚠️ Une autre session travaille en parallèle : vérifier `git status` avant d'éditer un fichier.
 > Légende : `[x]` = fait/vérifié · `[ ]` = à faire · 🔴 bloquant · 🟠 majeur · 🟡 moyen · 🔵 qualité
 > Cocher : remplacer `[ ]` par `[x]` (éditeur Markdown, VS Code, GitHub…).
@@ -55,7 +55,7 @@
 ### Acquisition & stockage
 - [x] **P1-10** `capteur_manager` : RTC + lumière + BME680 + GPS, timeouts par capteur, 2 timeouts consécutifs → erreur, seuils → `Mesure`.
 - [x] **P1-11** BME680 réel : lecture coefficients de calibration + oversampling + mode forcé + compensation Bosch (remplacer le placeholder 20 °C / 50 % / 1013,25 hPa).
-- [ ] **P1-12** GPS : ring buffer UART, parsing GGA complet (UTC, fix, satellites, lat/lon), statut retourné par `GroveGPS_Init`.
+- [x] **P1-12** GPS : ring buffer UART, parsing GGA complet (UTC, fix, satellites, lat/lon), statut retourné par `GroveGPS_Init`.
 - [x] **P1-13** RTC : contrôle du bit CH, mise à l'heure, politique d'erreur (arrêt ou poursuite — trancher), `HAL_I2C_Mem_Read/Write`.
 - [x] **P1-14** `stockage` : FatFs (présent dans le framework) + `diskio` SPI + CSV (en-tête, unités, horodatage) + nommage/rotation + flush ; **remplacer `SDLogger_WriteLine` (stub)**.
 - [x] **P1-15** Archivage : limite de fichier (octets ou lignes), stratégie (renommer/supprimer), comportement si carte absente/pleine.
@@ -75,8 +75,8 @@
 - [x] **P2-2** SPI SD : init ≤ 400 kHz puis 4–8 MHz ; CMD16/CMD59 ; timeouts d'init adaptés.
 - [x] **P2-3** Calibration ADC + conversion lumière (lux/% ou seuils) documentée (ADC 12 bits → 0..4095).
 - [x] **P2-4** UART console en IT/DMA + ring buffer (plus de `HAL_UART_Receive` bloquant).
-- [ ] **P2-5** Watchdog IWDG + reprise si SD retirée/absente ; arrêt propre du fichier en MAINTENANCE.
-- [ ] **P2-6** Comportements par mode : ECO (intervalle ×2, GPS 1 cycle/2), CONFIG (30 min d'inactivité), MAINTENANCE (live UART, pas d'écriture SD).
+- [x] **P2-5** Watchdog IWDG + reprise si SD retirée/absente ; arrêt propre du fichier en MAINTENANCE.
+- [x] **P2-6** Comportements par mode : ECO (intervalle ×2, GPS 1 cycle/2), CONFIG (30 min d'inactivité), MAINTENANCE (live UART, pas d'écriture SD).
 - [ ] **P2-7** Tests de transitions sur plateau + chronométrage (appui 5 s, timeout 30 min).
 
 ---

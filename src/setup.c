@@ -44,6 +44,11 @@ void USART2_IRQHandler(void)
     HAL_UART_IRQHandler(&huart2);
 }
 
+void UART4_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&huart4);
+}
+
 /**
  * @brief Initialisation du bus I2C1 (PB8=SCL, PB9=SDA)
  * @note  P2-1 : TIMINGR recalculé pour PCLK1 = 80 MHz (Standard Mode 100 kHz : 0x10909CEC)
@@ -224,6 +229,10 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uartHandle)
         GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
         GPIO_InitStruct.Alternate = GPIO_AF8_UART4;
         HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+        /* P1-12 : Activation de l'interruption UART4 pour le ring buffer GPS */
+        HAL_NVIC_SetPriority(UART4_IRQn, 6, 0);
+        HAL_NVIC_EnableIRQ(UART4_IRQn);
     }
 }
 

@@ -25,6 +25,9 @@ typedef struct
 
     uint8_t fix_quality;
     uint8_t satellites;
+    uint8_t utc_hours;
+    uint8_t utc_minutes;
+    uint8_t utc_seconds;
 } GPS_Data;
 
 typedef struct
