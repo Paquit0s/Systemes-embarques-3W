@@ -84,6 +84,12 @@ static void on_event(const Event *e)
         {
             (void)ModeManager_RequestMode(s_mm.previous);
         }
+        /* Sortie de CONFIGURATION : appui court (< 5s) OU appui long (5s) pour passage en STANDARD */
+        else if (s_mm.current == MODE_CONFIGURATION &&
+                 (e->type == EVENT_BTN_LONG || (e->type == EVENT_BTN_RELEASE && e->duration_ms < 5000U)))
+        {
+            (void)ModeManager_RequestMode(MODE_STANDARD);
+        }
     }
 }
 

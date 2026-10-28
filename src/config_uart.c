@@ -184,6 +184,7 @@ static void print_help(void)
           "  DEFAULTS                     : Restaure les parametres par defaut\r\n"
           "  SAVE                         : Sauvegarde la configuration en Flash\r\n"
           "  SETRTC YYYY-MM-DD HH:MM:SS   : Met a l'heure l'horloge RTC DS1307\r\n"
+          "  EXIT / QUIT                  : Quitte la configuration et passe en STANDARD\r\n"
           "Parametres :\r\n"
           "  log_interval (5..3600 s), timeout_bme680 (100..5000 ms),\r\n"
           "  timeout_light (10..1000 ms), timeout_gps (500..10000 ms),\r\n"
@@ -363,6 +364,12 @@ static void process_line(char *line)
         char *d = strtok_r(NULL, " \t", &save);
         char *t = strtok_r(NULL, " \t", &save);
         print(cmd_setrtc(d, t) ? "OK RTC mise a l'heure\r\n" : "ERR format (SETRTC YYYY-MM-DD HH:MM:SS)\r\n");
+        return;
+    }
+    if (!strcasecmp(cmd, "EXIT") || !strcasecmp(cmd, "QUIT"))
+    {
+        (void)ModeManager_RequestMode(MODE_STANDARD);
+        print("OK sortie de configuration -> passage en mode STANDARD\r\n");
         return;
     }
     print("ERR commande inconnue (tapez HELP)\r\n");
