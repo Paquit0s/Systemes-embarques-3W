@@ -1,15 +1,17 @@
 #include "interruption.h"
 #include "board_pins.h"
 #include "stm32l4xx_hal.h"
+#include <stdio.h>
 
 /* --- Mapping matériel des boutons (Base Shield Grove + Nucleo-L476RG) ---
- *  - BTN_RED   : PC13 (B1 utilisateur Nucleo) OU PB3 (D3 = Signal2 du Grove Dual Button sur port D2)
- *  - BTN_GREEN : PA10 (D2 = Signal1 du Grove Dual Button sur port D2)
- *  Tous ces boutons sont actifs à l'état BAS (pull-up interne activé).
- *  Si un bouton Grove simple actif-haut est utilisé à la place, passer BTN_ACTIVE_LOW à 0.
+ *  - BTN_GREEN : PA10 (Port Grove D2), actif à l'état HAUT (pull-down).
+ *  - BTN_RED   : 
+ *      1. PB3 (Port Grove D3 ou D2 Signal2 du Dual Button), actif à l'état HAUT.
+ *      2. PB4 (Port Grove D5), actif à l'état HAUT.
+ *      3. PA9 (Port Grove D8), actif à l'état HAUT.
+ *      4. PC13 (B1 utilisateur Nucleo), actif à l'état BAS (pull-up).
  */
-#define BTN_ACTIVE_LOW          1
-#define BTN_ENABLE_GROVE_D3_RED 0
+#define BTN_ENABLE_GROVE_RED    1
 
 #define DEBOUNCE_MS             30U
 #define LONG_PRESS_MS           5000U
@@ -41,22 +43,30 @@ static bool button_is_pressed_hw(ButtonId id)
 {
     if (id == BTN_RED)
     {
-        /* Bouton B1 Nucleo (PC13) : actif a l'etat BAS (RESET quand enfonce) */
+        /* 1. Bouton bleu Nucleo B1 (PC13) : actif a l'etat BAS */
         bool red_b1 = (HAL_GPIO_ReadPin(BUTTON_USER_PORT, BUTTON_USER_PIN) == GPIO_PIN_RESET);
-#if BTN_ENABLE_GROVE_D3_RED
-        /* Bouton Grove rouge optionnel sur D3 (PB3) : actif a l'etat HAUT (SET quand enfonce) */
-        bool red_d3 = (HAL_GPIO_ReadPin(BUTTON2_PORT, BUTTON2_PIN) == GPIO_PIN_SET);
-        return (red_b1 || red_d3);
+
+#if BTN_ENABLE_GROVE_RED
+    /* 2. Bouton Grove Rouge sur D3 (PB3) : actif a l'etat HAUT */
+    bool red_d3 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_SET);
+    /* 3. Bouton Grove Rouge alternatif sur D5 (PB4) : actif a l'etat HAUT */
+    bool red_d5 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4) == GPIO_PIN_SET);
+    /* 4. Bouton Grove Rouge alternatif sur D8 (PA9) : actif a l'etat HAUT */
+    bool red_d8 = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9) == GPIO_PIN_SET);
+    /* 5. Bouton Grove Rouge alternatif sur D9 (PC7) : actif a l'etat HAUT */
+    bool red_d9 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7) == GPIO_PIN_SET);
+
+    return (red_b1 || red_d3 || red_d5 || red_d8 || red_d9);
 #else
-        return red_b1;
+    return red_b1;
 #endif
-    }
-    if (id == BTN_GREEN)
-    {
-        /* Bouton Grove vert sur D2 (PA10) : actif a l'etat HAUT (SET quand enfonce) */
-        return (HAL_GPIO_ReadPin(BUTTON1_PORT, BUTTON1_PIN) == GPIO_PIN_SET);
-    }
-    return false;
+}
+if (id == BTN_GREEN)
+{
+    /* Bouton Grove vert sur D2 (PA10) : actif a l'etat HAUT */
+    return (HAL_GPIO_ReadPin(BUTTON1_PORT, BUTTON1_PIN) == GPIO_PIN_SET);
+}
+return false;
 }
 
 static void push_event(EventType t, ButtonId id, uint32_t tick, uint32_t dur)
@@ -73,6 +83,27 @@ static void push_event(EventType t, ButtonId id, uint32_t tick, uint32_t dur)
         .duration_ms = dur
     };
     s_qhead = next;
+
+    if (t == EVENT_BTN_PRESS)
+    {
+        if (id == BTN_RED)
+        {
+            printf("[BTN] Appui detecte sur bouton ROUGE (maintenez 5s pour Mode MAINTENANCE)...\r\n");
+        }
+        else
+        {
+            printf("[BTN] Appui detecte sur bouton VERT (bascule Standard <-> Eco)\r\n");
+        }
+    }
+    else if (t == EVENT_BTN_LONG)
+    {
+        printf("[BTN] *** Appui de 5 SECONDES confirme sur bouton %s ! ***\r\n", (id == BTN_RED) ? "ROUGE" : "VERT");
+    }
+    else if (t == EVENT_BTN_RELEASE)
+    {
+        printf("[BTN] Relachement bouton %s (duree: %lu ms)\r\n",
+               (id == BTN_RED) ? "ROUGE" : "VERT", (unsigned long)dur);
+    }
 }
 
 void Interruption_Init(void)
@@ -85,36 +116,55 @@ void Interruption_Init(void)
     gpio.Mode  = GPIO_MODE_IT_RISING_FALLING;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
 
-    /* Bouton Rouge (Nucleo B1 : PC13 -> EXTI15_10, actif BAS avec pull-up) */
+    /* Bouton Rouge Nucleo B1 (PC13 -> EXTI15_10, actif BAS avec pull-up) */
     gpio.Pin  = BUTTON_USER_PIN;
     gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(BUTTON_USER_PORT, &gpio);
 
-    /* Bouton Vert (Grove D2 SIG1 : PA10 -> EXTI15_10, actif HAUT avec pull-down) */
+    /* Bouton Vert Grove D2 (PA10 -> EXTI15_10, actif HAUT avec pull-down) */
     gpio.Pin  = BUTTON1_PIN;
     gpio.Pull = GPIO_PULLDOWN;
     HAL_GPIO_Init(BUTTON1_PORT, &gpio);
 
-#if BTN_ENABLE_GROVE_D3_RED
-    /* Bouton Rouge alternatif (Grove D2 SIG2 / D3 : PB3 -> EXTI3, actif HAUT avec pull-down) */
-    gpio.Pin  = BUTTON2_PIN;
+#if BTN_ENABLE_GROVE_RED
+    /* Boutons Rouges Grove : D3 (PB3 -> EXTI3), D5 (PB4 -> EXTI4) avec pull-down */
+    gpio.Pin  = GPIO_PIN_3 | GPIO_PIN_4;
     gpio.Pull = GPIO_PULLDOWN;
-    HAL_GPIO_Init(BUTTON2_PORT, &gpio);
+    HAL_GPIO_Init(GPIOB, &gpio);
+
+    /* Bouton Rouge Grove alternatif : D8 (PA9 -> EXTI9_5) avec pull-down */
+    gpio.Pin  = GPIO_PIN_9;
+    gpio.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(GPIOA, &gpio);
+
+    /* Bouton Rouge Grove alternatif : D9 (PC7 -> EXTI9_5) avec pull-down */
+    gpio.Pin  = GPIO_PIN_7;
+    gpio.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(GPIOC, &gpio);
 #endif
 
     /* Nettoyage des drapeaux EXTI avant activation NVIC */
     __HAL_GPIO_EXTI_CLEAR_IT(BUTTON_USER_PIN);
     __HAL_GPIO_EXTI_CLEAR_IT(BUTTON1_PIN);
-#if BTN_ENABLE_GROVE_D3_RED
-    __HAL_GPIO_EXTI_CLEAR_IT(BUTTON2_PIN);
+#if BTN_ENABLE_GROVE_RED
+    __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_3);
+    __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_4);
+    __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_7);
+    __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_9);
 #endif
 
     HAL_NVIC_SetPriority(EXTI15_10_IRQn, 3U, 0U);
     HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
-#if BTN_ENABLE_GROVE_D3_RED
+#if BTN_ENABLE_GROVE_RED
     HAL_NVIC_SetPriority(EXTI3_IRQn, 3U, 0U);
     HAL_NVIC_EnableIRQ(EXTI3_IRQn);
+
+    HAL_NVIC_SetPriority(EXTI4_IRQn, 3U, 0U);
+    HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+
+    HAL_NVIC_SetPriority(EXTI9_5_IRQn, 3U, 0U);
+    HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 #endif
 
     s_qhead = 0U;
@@ -131,9 +181,6 @@ void Interruption_Init(void)
         s_btn[i].edge_tick = now;
         if (button_is_pressed_hw((ButtonId)i))
         {
-            /* Bouton maintenu dès la mise sous tension (ex: entrée en MODE_CONFIGURATION).
-             * On marque long_fired = true pour que le relâchement post-boot ne déclenche
-             * pas un appui long parasite de 5 s. */
             s_btn[i].state      = BS_PRESSED;
             s_btn[i].press_tick = now;
             s_btn[i].long_fired = true;
@@ -156,10 +203,21 @@ void EXTI15_10_IRQHandler(void)
     HAL_GPIO_EXTI_IRQHandler(BUTTON1_PIN);
 }
 
-#if BTN_ENABLE_GROVE_D3_RED
+#if BTN_ENABLE_GROVE_RED
 void EXTI3_IRQHandler(void)
 {
-    HAL_GPIO_EXTI_IRQHandler(BUTTON2_PIN);
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);
+}
+
+void EXTI4_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_4);
+}
+
+void EXTI9_5_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_7);
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_9);
 }
 #endif
 
@@ -167,8 +225,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t pin)
 {
     uint32_t t = HAL_GetTick();
     if (pin == BUTTON_USER_PIN
-#if BTN_ENABLE_GROVE_D3_RED
-        || pin == BUTTON2_PIN
+#if BTN_ENABLE_GROVE_RED
+        || pin == GPIO_PIN_3 || pin == GPIO_PIN_4 || pin == GPIO_PIN_7 || pin == GPIO_PIN_9
 #endif
     )
     {

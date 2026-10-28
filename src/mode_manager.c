@@ -12,8 +12,23 @@ static struct {
 
 void ModeManager_Init(void)
 {
-    /* Au démarrage : bouton rouge maintenu -> CONFIGURATION, sinon STANDARD */
-    s_mm.current  = Interruption_IsHeld(BTN_RED) ? MODE_CONFIGURATION : MODE_STANDARD;
+    /* Au démarrage : vérifie que le bouton rouge est VRAIMENT maintenu (> 200 ms) */
+    bool held = false;
+    if (Interruption_IsHeld(BTN_RED))
+    {
+        uint32_t t0 = HAL_GetTick();
+        held = true;
+        while ((HAL_GetTick() - t0) < 200U)
+        {
+            if (!Interruption_IsHeld(BTN_RED))
+            {
+                held = false;
+                break;
+            }
+        }
+    }
+
+    s_mm.current  = held ? MODE_CONFIGURATION : MODE_STANDARD;
     s_mm.previous = MODE_STANDARD;
     s_mm.config_last_activity_ms = HAL_GetTick();
 }
