@@ -70,23 +70,24 @@ static void on_event(const Event *e)
             }
         }
     }
-    /* 2. Bouton ROUGE (B1 Nucleo PC13 ou Grove D3) */
+    /* 2. Bouton ROUGE (B1 Nucleo PC13) */
     else if (e->button == BTN_RED)
     {
-        /* Entrée en MAINTENANCE : appui long 5 secondes requis depuis STANDARD ou ECO */
-        if (e->type == EVENT_BTN_LONG && (s_mm.current == MODE_STANDARD || s_mm.current == MODE_ECO))
+        /* P1-8 & P2-7 : Entrée ET sortie de MAINTENANCE nécessitent un appui long de 5 secondes */
+        if (e->type == EVENT_BTN_LONG)
         {
-            (void)ModeManager_RequestMode(MODE_MAINTENANCE);
+            if (s_mm.current == MODE_STANDARD || s_mm.current == MODE_ECO)
+            {
+                (void)ModeManager_RequestMode(MODE_MAINTENANCE);
+            }
+            else if (s_mm.current == MODE_MAINTENANCE)
+            {
+                (void)ModeManager_RequestMode(s_mm.previous);
+            }
         }
-        /* Sortie de MAINTENANCE : appui court (< 5s) OU appui long (5s) pour retour au mode précédent */
-        else if (s_mm.current == MODE_MAINTENANCE &&
-                 (e->type == EVENT_BTN_LONG || (e->type == EVENT_BTN_RELEASE && e->duration_ms < 5000U)))
-        {
-            (void)ModeManager_RequestMode(s_mm.previous);
-        }
-        /* Sortie de CONFIGURATION : appui court (< 5s) OU appui long (5s) pour passage en STANDARD */
+        /* Sortie de CONFIGURATION : appui sur bouton rouge pour retour immédiat en STANDARD */
         else if (s_mm.current == MODE_CONFIGURATION &&
-                 (e->type == EVENT_BTN_LONG || (e->type == EVENT_BTN_RELEASE && e->duration_ms < 5000U)))
+                 (e->type == EVENT_BTN_LONG || e->type == EVENT_BTN_RELEASE))
         {
             (void)ModeManager_RequestMode(MODE_STANDARD);
         }
