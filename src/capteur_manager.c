@@ -54,6 +54,7 @@ bool CapteurManager_Init(void)
     /* P2-3 : Calibration matérielle ADC1 12 bits + configuration canal PA4 */
     GroveLight_Init();
     if (!GroveGPS_Init())
+    {
         printf("[WARN] Impossible d'armer la reception IT du GPS (UART4).\r\n");
     }
 
