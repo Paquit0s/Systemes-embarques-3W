@@ -55,7 +55,7 @@
 ### Acquisition & stockage
 - [x] **P1-10** `capteur_manager` : RTC + lumière + BME680 + GPS, timeouts par capteur, 2 timeouts consécutifs → erreur, seuils → `Mesure`.
 - [x] **P1-11** BME680 réel : lecture coefficients de calibration + oversampling + mode forcé + compensation Bosch (remplacer le placeholder 20 °C / 50 % / 1013,25 hPa).
-- [ ] **P1-12** GPS : ring buffer UART, parsing GGA complet (UTC, fix, satellites, lat/lon), statut retourné par `GroveGPS_Init`.
+- [x] **P1-12** GPS : ring buffer UART, parsing GGA complet (UTC, fix, satellites, lat/lon), statut retourné par `GroveGPS_Init`.
 - [x] **P1-13** RTC : contrôle du bit CH, mise à l'heure, politique d'erreur (arrêt ou poursuite — trancher), `HAL_I2C_Mem_Read/Write`.
 - [x] **P1-14** `stockage` : FatFs (présent dans le framework) + `diskio` SPI + CSV (en-tête, unités, horodatage) + nommage/rotation + flush ; **remplacer `SDLogger_WriteLine` (stub)**.
 - [x] **P1-15** Archivage : limite de fichier (octets ou lignes), stratégie (renommer/supprimer), comportement si carte absente/pleine.

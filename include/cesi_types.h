@@ -25,6 +25,14 @@ typedef struct
 
     uint8_t fix_quality;
     uint8_t satellites;
+
+    /* P1-12 : parsing GGA complet (UTC, HDOP, altitude) */
+    char    utc_time[12];   /* Format "HH:MM:SS" */
+    uint8_t utc_hour;
+    uint8_t utc_min;
+    uint8_t utc_sec;
+    float   altitude_m;     /* Altitude au-dessus du niveau de la mer (mètres) */
+    float   hdop;           /* Dilution horizontale de la précision */
 } GPS_Data;
 
 typedef struct

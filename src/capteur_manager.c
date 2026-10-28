@@ -51,7 +51,10 @@ bool CapteurManager_Init(void)
     }
 
     GroveLight_Init();
-    GroveGPS_Init();
+    if (!GroveGPS_Init())
+    {
+        printf("[WARN] GPS Air530Z non initialise au demarrage (UART4).\r\n");
+    }
 
     return rtc_ok;
 }
