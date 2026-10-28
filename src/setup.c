@@ -20,11 +20,27 @@ static void MX_ADC1_Init(void);
 
 /**
  * @brief Redirection du flux standard stdout (printf) vers l'UART2 (ST-Link)
+ *        Écriture matérielle directe via les registres USART2 (TDR/TXE) :
+ *        totalement immunisée contre les états bloquants HAL_BUSY ou les verrous HAL.
  */
 int _write(int file, char *ptr, int len)
 {
-    (void)file; /* Évite le warning compilateur -Wunused-parameter */
-    HAL_UART_Transmit(&huart2, (uint8_t *)ptr, (uint16_t)len, HAL_MAX_DELAY);
+    (void)file;
+    if (ptr == NULL || len <= 0)
+    {
+        return 0;
+    }
+
+    for (int i = 0; i < len; ++i)
+    {
+        uint32_t timeout = 100000U;
+        while (((USART2->ISR & USART_ISR_TXE) == 0U) && (--timeout > 0U)) {}
+        if (timeout == 0U)
+        {
+            break;
+        }
+        USART2->TDR = (uint8_t)ptr[i];
+    }
     return len;
 }
 

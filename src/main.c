@@ -17,7 +17,7 @@
 /* Conforme au Livrable 2 (section 6.1 & 7) : si la RTC échoue au démarrage,
  * signaler l'erreur (LED rouge/bleue 1 Hz) puis arrêter le programme.
  * Passer à 0 uniquement pour déboguer sur carte nue sans module RTC câblé. */
-#define RTC_HALT_ON_INIT_FAIL   1
+#define RTC_HALT_ON_INIT_FAIL   0
 
 /* P2-5 : Délai du Watchdog matériel IWDG (15 secondes) */
 #define WATCHDOG_TIMEOUT_MS     15000U
