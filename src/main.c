@@ -7,6 +7,7 @@
 #include "capteur_manager.h"
 #include "stockage.h"
 #include "config_uart.h"
+#include "grove_light.h"
 #include "stm32l4xx_hal.h"
 
 #include <stdio.h>
@@ -16,9 +17,13 @@
 /* Conforme au Livrable 2 (section 6.1 & 7) : si la RTC échoue au démarrage,
  * signaler l'erreur (LED rouge/bleue 1 Hz) puis arrêter le programme.
  * Passer à 0 uniquement pour déboguer sur carte nue sans module RTC câblé. */
-#define RTC_HALT_ON_INIT_FAIL  1
+#define RTC_HALT_ON_INIT_FAIL   1
 
-#define MAINTENANCE_PERIOD_MS  2000U
+/* P2-5 : Délai du Watchdog matériel IWDG (15 secondes) */
+#define WATCHDOG_TIMEOUT_MS     15000U
+
+/* P2-6 : Cadence d'affichage en direct sur UART en mode MAINTENANCE */
+#define MAINTENANCE_PERIOD_MS   2000U
 
 static const char *mode_to_str(ModeSysteme m)
 {
@@ -35,7 +40,7 @@ static const char *mode_to_str(ModeSysteme m)
 static void print_mesure_uart(const Mesure *m)
 {
     char ts_str[32];
-    char t_str[20], h_str[20], p_str[20], l_str[20], gps_str[48];
+    char t_str[20], h_str[20], p_str[20], l_str[40], gps_str[48];
 
     if (m->timestamp.year >= 2000U && m->timestamp.month >= 1U && m->timestamp.day >= 1U)
     {
@@ -71,10 +76,18 @@ static void print_mesure_uart(const Mesure *m)
                  (m->statut_press == STATUT_INCOHERENT) ? "(!)" : "");
 
     if (m->statut_light == STATUT_NA)
+    {
         strcpy(l_str, "NA");
+    }
     else
-        snprintf(l_str, sizeof(l_str), "%u%s", (unsigned int)m->light,
+    {
+        /* P2-3 : Affichage valeur brute 12 bits + % + estimation lux */
+        float pct = GroveLight_RawToPercent(m->light);
+        float lux = GroveLight_RawToLux(m->light);
+        snprintf(l_str, sizeof(l_str), "%u (%.0f%%/%.0flux)%s",
+                 (unsigned int)m->light, (double)pct, (double)lux,
                  (m->statut_light == STATUT_INCOHERENT) ? "(!)" : "");
+    }
 
     if (m->statut_gps == STATUT_NA || !m->gps.valid)
     {
@@ -92,8 +105,11 @@ static void print_mesure_uart(const Mesure *m)
 
 int main(void)
 {
-    /* 1. Initialisation matérielle BSP (Horloge, I2C1, SPI1, USART2, UART4, ADC1) */
+    /* 1. Initialisation matérielle BSP (PLL 80 MHz, I2C1, SPI1, USART2 IT, UART4, ADC1) */
     Global_Init();
+
+    bool iwdg_reset = (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET);
+    __HAL_RCC_CLEAR_RESET_FLAGS();
 
     /* 2. Initialisation des services applicatifs */
     ConfigUART_Init();
@@ -101,7 +117,12 @@ int main(void)
     LedControl_Init();
     ModeManager_Init();
 
-    printf("\r\n=== Station Meteo 3W (STM32L476RG) ===\r\n");
+    printf("\r\n=== Station Meteo 3W (STM32L476RG @ %lu MHz) ===\r\n",
+           (unsigned long)(HAL_RCC_GetSysClockFreq() / 1000000UL));
+    if (iwdg_reset)
+    {
+        printf("[WDT] Reprise automatique apres declenchement du Watchdog IWDG.\r\n");
+    }
 
     /* 3. Initialisation RTC et capteurs (Livrable 2 : arrêt si échec RTC au démarrage) */
     bool rtc_ok = CapteurManager_Init();
@@ -117,63 +138,81 @@ int main(void)
 #endif
     }
 
-    ModeSysteme last_mode = ModeManager_GetMode();
-    printf("[MODE] Demarrage en mode %s\r\n", mode_to_str(last_mode));
-    if (last_mode == MODE_CONFIGURATION)
+    /* 4. Activation du Watchdog indépendant IWDG (P2-5) */
+    if (!BSP_Watchdog_Init(WATCHDOG_TIMEOUT_MS))
     {
-        printf("[CFG] Entrez HELP pour afficher les commandes disponibles.\r\n");
+        printf("[WARN] Impossible d'initialiser le Watchdog IWDG.\r\n");
     }
 
-    if (last_mode == MODE_STANDARD || last_mode == MODE_ECO)
+    ModeSysteme last_mode = ModeManager_GetMode();
+    printf("[t=%lu ms] [MODE] Demarrage en mode %s\r\n",
+           (unsigned long)HAL_GetTick(), mode_to_str(last_mode));
+
+    if (last_mode == MODE_CONFIGURATION)
+    {
+        ConfigUART_FlushInput();
+        printf("[CFG] Mode CONFIGURATION (inactivite max: %lu s). Tapez HELP.\r\n",
+               (unsigned long)ConfigUART_Get()->config_timeout_s);
+    }
+    else if (last_mode == MODE_STANDARD || last_mode == MODE_ECO)
     {
         (void)Stockage_Init();
     }
 
     LedControl_Update(HAL_GetTick());
 
-    uint32_t last_acq_ms = HAL_GetTick();
+    uint32_t last_acq_ms   = HAL_GetTick();
+    uint32_t mode_enter_ms = last_acq_ms;
     bool     first_acq_pending = (last_mode != MODE_CONFIGURATION);
 
-    /* 4. Boucle principale coopérative (aucun HAL_Delay bloquant) */
+    /* 5. Boucle principale coopérative (aucun HAL_Delay bloquant) */
     for (;;)
     {
         uint32_t now = HAL_GetTick();
+        BSP_Watchdog_Refresh();
 
         Interruption_Update(now);
         ModeManager_Update(now);
         ModeSysteme mode = ModeManager_GetMode();
 
-        /* Gestion des transitions de mode */
+        /* P2-6 & P2-7 : Gestion et chronométrage des transitions de mode */
         if (mode != last_mode)
         {
-            printf("[MODE] Transition %s -> %s\r\n", mode_to_str(last_mode), mode_to_str(mode));
+            uint32_t elapsed_ms = now - mode_enter_ms;
+            printf("[t=%lu ms] [MODE] Transition %s -> %s (duree mode precedent: %lu ms)\r\n",
+                   (unsigned long)now,
+                   mode_to_str(last_mode),
+                   mode_to_str(mode),
+                   (unsigned long)elapsed_ms);
 
             if (mode == MODE_MAINTENANCE || mode == MODE_CONFIGURATION)
             {
-                /* Fermeture propre du fichier SD avant retrait carte ou configuration */
+                /* P2-5 / P2-6 : Fermeture propre du fichier SD avant retrait carte ou config */
                 Stockage_Close();
                 if (mode == MODE_CONFIGURATION)
                 {
+                    ConfigUART_FlushInput();
                     printf("[CFG] Mode CONFIGURATION actif (inactivite max: %lu s). Tapez HELP.\r\n",
                            (unsigned long)ConfigUART_Get()->config_timeout_s);
                 }
             }
             else if (last_mode == MODE_MAINTENANCE || last_mode == MODE_CONFIGURATION)
             {
-                /* Réouverture et réinitialisation de la carte SD en sortie de maintenance/config */
+                /* P2-5 : Réouverture et réinitialisation de la carte SD en sortie de maintenance/config */
                 (void)Stockage_Init();
             }
 
             first_acq_pending = (mode != MODE_CONFIGURATION);
-            last_acq_ms = now;
-            last_mode = mode;
+            last_acq_ms       = now;
+            mode_enter_ms     = now;
+            last_mode         = mode;
         }
 
         const Config *c = ConfigUART_Get();
         uint32_t period_ms = c->log_interval_s * 1000U;
         if (mode == MODE_ECO)
         {
-            period_ms *= 2U;
+            period_ms *= 2U; /* P2-6 : Intervalle doublé en mode ECONOMIQUE */
         }
 
         bool acq_due = (mode == MODE_STANDARD || mode == MODE_ECO) &&
@@ -191,17 +230,17 @@ int main(void)
             {
                 if (Stockage_LogMesure(&m))
                 {
-                    printf("[LOG SD] ");
+                    printf("[%s | LOG SD] ", (mode == MODE_ECO) ? "ECO" : "STD");
                 }
                 else
                 {
-                    printf("[ERR SD] ");
+                    printf("[%s | ERR SD] ", (mode == MODE_ECO) ? "ECO" : "STD");
                 }
                 print_mesure_uart(&m);
             }
             else
             {
-                /* Mode MAINTENANCE : affichage en direct sur UART uniquement, aucune écriture SD */
+                /* P2-6 : Mode MAINTENANCE : affichage live UART uniquement, pas d'écriture SD */
                 printf("[MAINT] ");
                 print_mesure_uart(&m);
             }
@@ -210,7 +249,7 @@ int main(void)
             last_acq_ms = HAL_GetTick();
         }
 
-        /* Console de configuration active uniquement en MODE_CONFIGURATION (Livrable 2) */
+        /* P2-4 & P2-6 : Console non bloquante active uniquement en MODE_CONFIGURATION */
         if (mode == MODE_CONFIGURATION)
         {
             ConfigUART_Process();

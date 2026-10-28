@@ -13,6 +13,7 @@
  *   - huart4 : Réception GPS Air530Z (PA0=TX, PA1=RX @ 9600 bauds, pin swap actif)
  *   - hadc1  : Convertisseur ADC1 12 bits (PA4 = ADC1_IN9) -> Capteur de luminosité (0 à 4095)
  *   - hspi1  : Bus SPI1 (PA5=SCK, PA6=MISO, PA7=MOSI, PB5=CS) -> Carte SD
+ *   - hiwdg  : Watchdog indépendant matériel (LSI 32 kHz)
  *
  * ATTENTION MATÉRIELLE (P0-8) :
  *   La broche PA5 (D13) est utilisée par SPI1_SCK pour la carte SD.
@@ -25,6 +26,7 @@ extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart4;
 extern ADC_HandleTypeDef  hadc1;
 extern SPI_HandleTypeDef  hspi1;
+extern IWDG_HandleTypeDef hiwdg;
 
 /* Alias de handles pour les pilotes de la couche lib/cesi_grove */
 #define GROVE_I2C_HANDLE  hi2c1

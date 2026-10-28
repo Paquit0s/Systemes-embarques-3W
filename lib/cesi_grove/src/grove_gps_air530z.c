@@ -1,83 +1,38 @@
 #include "grove_gps_air530z.h"
 #include "board_pins.h"
+#include "setup.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
 
 /* =========================================================================
- * TAMPON CIRCULAIRE (RING BUFFER) DE RÉCEPTION UART4
+ * P1-12 : Ring buffer UART4 sur interruption pour réception NMEA continue
  * ========================================================================= */
-#define GPS_RING_BUF_SIZE 512U
+#define GPS_RX_RING_SIZE  256U
 
-static volatile uint8_t  s_rx_buf[GPS_RING_BUF_SIZE];
-static volatile uint16_t s_rx_head     = 0U;
-static volatile uint16_t s_rx_tail     = 0U;
-static volatile bool     s_rx_overflow = false;
+static volatile uint8_t  s_gps_ring[GPS_RX_RING_SIZE];
+static volatile uint32_t s_gps_head = 0U;
+static volatile uint32_t s_gps_tail = 0U;
+static uint8_t           s_gps_rx_byte = 0U;
 
-/**
- * @brief Gestionnaire d'interruption UART4 appelé à chaque octet reçu du GPS
- */
-void GroveGPS_UART_IRQHandler(void)
+void GroveGPS_RxCpltHook(void)
 {
-    /* Vérification de la réception d'un octet (RXNE) */
-    if (__HAL_UART_GET_FLAG(&GPS_UART_HANDLE, UART_FLAG_RXNE) != RESET)
+    uint32_t next = (s_gps_head + 1U) % GPS_RX_RING_SIZE;
+    if (next != s_gps_tail)
     {
-        uint8_t c = (uint8_t)(GPS_UART_HANDLE.Instance->RDR & 0xFFU);
-        uint16_t next = (s_rx_head + 1U) % GPS_RING_BUF_SIZE;
-        if (next == s_rx_tail)
-        {
-            /* En cas de saturation du tampon, on écrase l'octet le plus ancien
-             * pour toujours conserver le flux NMEA le plus récent */
-            s_rx_tail = (s_rx_tail + 1U) % GPS_RING_BUF_SIZE;
-            s_rx_overflow = true;
-        }
-        s_rx_buf[s_rx_head] = c;
-        s_rx_head = next;
+        s_gps_ring[s_gps_head] = s_gps_rx_byte;
+        s_gps_head = next;
     }
-
-    /* Acquittement préventif des drapeaux d'erreur de la liaison série */
-    if (__HAL_UART_GET_FLAG(&GPS_UART_HANDLE, UART_FLAG_ORE) != RESET)
-    {
-        __HAL_UART_CLEAR_OREFLAG(&GPS_UART_HANDLE);
-    }
-    if (__HAL_UART_GET_FLAG(&GPS_UART_HANDLE, UART_FLAG_FE) != RESET)
-    {
-        __HAL_UART_CLEAR_FEFLAG(&GPS_UART_HANDLE);
-    }
-    if (__HAL_UART_GET_FLAG(&GPS_UART_HANDLE, UART_FLAG_NE) != RESET)
-    {
-        __HAL_UART_CLEAR_NEFLAG(&GPS_UART_HANDLE);
-    }
+    (void)HAL_UART_Receive_IT(&GPS_UART_HANDLE, &s_gps_rx_byte, 1U);
 }
 
-/**
- * @brief Routine d'interruption UART4 pour le vecteur Cortex-M4 (surcharge du symbole weak CMSIS)
- */
-void UART4_IRQHandler(void)
+void GroveGPS_ErrorHook(void)
 {
-    GroveGPS_UART_IRQHandler();
-}
-
-/**
- * @brief Extraction atomique d'un octet depuis le ring buffer
- */
-static bool gps_ring_pop(uint8_t *out)
-{
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-
-    if (s_rx_head == s_rx_tail)
-    {
-        __set_PRIMASK(primask);
-        return false;
-    }
-
-    *out = s_rx_buf[s_rx_tail];
-    s_rx_tail = (s_rx_tail + 1U) % GPS_RING_BUF_SIZE;
-
-    __set_PRIMASK(primask);
-    return true;
+    __HAL_UART_CLEAR_OREFLAG(&GPS_UART_HANDLE);
+    __HAL_UART_CLEAR_NEFLAG(&GPS_UART_HANDLE);
+    __HAL_UART_CLEAR_FEFLAG(&GPS_UART_HANDLE);
+    (void)HAL_UART_Receive_IT(&GPS_UART_HANDLE, &s_gps_rx_byte, 1U);
 }
 
 void GroveGPS_Flush(void)
@@ -85,66 +40,44 @@ void GroveGPS_Flush(void)
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
-    s_rx_head     = 0U;
-    s_rx_tail     = 0U;
-    s_rx_overflow = false;
+    s_gps_head = 0U;
+    s_gps_tail = 0U;
 
     __set_PRIMASK(primask);
 }
 
-bool GroveGPS_Init(void)
+static bool gps_ring_pop(uint8_t *out)
 {
-    /* Vérification que le handle UART4 est bien initialisé par setup.c */
-    if (GPS_UART_HANDLE.Instance == NULL)
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (s_gps_tail == s_gps_head)
     {
+        __set_PRIMASK(primask);
         return false;
     }
+    *out = s_gps_ring[s_gps_tail];
+    s_gps_tail = (s_gps_tail + 1U) % GPS_RX_RING_SIZE;
 
-    /* Réinitialisation du tampon circulaire */
-    GroveGPS_Flush();
-
-    /* Configuration NVIC de la priorité et activation de l'interruption UART4 */
-    HAL_NVIC_SetPriority(UART4_IRQn, 2U, 0U);
-    HAL_NVIC_EnableIRQ(UART4_IRQn);
-
-    /* Acquittement des erreurs résiduelles avant armement */
-    __HAL_UART_CLEAR_OREFLAG(&GPS_UART_HANDLE);
-    __HAL_UART_CLEAR_FEFLAG(&GPS_UART_HANDLE);
-    __HAL_UART_CLEAR_NEFLAG(&GPS_UART_HANDLE);
-
-    /* Activation de l'interruption de réception (RXNE) */
-    __HAL_UART_ENABLE_IT(&GPS_UART_HANDLE, UART_IT_RXNE);
-
+    __set_PRIMASK(primask);
     return true;
 }
 
-/* =========================================================================
- * FONCTIONS DE LECTURE ET PARSING NMEA
- * ========================================================================= */
-
-/**
- * @brief Conversion NMEA (ddmm.mmmm ou dddmm.mmmm) vers coordonnées décimales
- */
 static double nmea_to_decimal(const char *value, const char hemisphere)
 {
     if (value == NULL || value[0] == '\0') return 0.0;
 
     double raw = atof(value);
     int degrees = (int)(raw / 100.0);
-    double minutes = raw - ((double)degrees * 100.0);
-    double decimal = (double)degrees + (minutes / 60.0);
+    double minutes = raw - (degrees * 100.0);
+    double decimal = degrees + (minutes / 60.0);
 
     if (hemisphere == 'S' || hemisphere == 's' || hemisphere == 'W' || hemisphere == 'w')
-    {
         decimal = -decimal;
-    }
 
     return decimal;
 }
 
-/**
- * @brief Vérification de la somme de contrôle NMEA (*HH en fin de trame)
- */
 static bool nmea_verify_checksum(const char *sentence)
 {
     if (sentence == NULL || sentence[0] != '$') return false;
@@ -158,13 +91,12 @@ static bool nmea_verify_checksum(const char *sentence)
         p++;
     }
 
-    /* Si pas d'astérisque de checksum, on accepte par défaut */
     if (*p != '*')
     {
         return true;
     }
 
-    p++; /* Sauter le '*' */
+    p++;
     if (p[0] == '\0' || p[1] == '\0')
     {
         return false;
@@ -181,60 +113,58 @@ static bool nmea_verify_checksum(const char *sentence)
     return (calculated == (uint8_t)expected);
 }
 
-/**
- * @brief Détection d'une trame de type GGA ($GPGGA, $GNGGA, $GAGGA, etc.)
- */
-static bool is_gga_sentence(const char *line)
+static void parse_utc_time(const char *utc_field, GPS_Data *gps)
 {
-    if (line == NULL || line[0] != '$') return false;
+    gps->utc_hours   = 0U;
+    gps->utc_minutes = 0U;
+    gps->utc_seconds = 0U;
+    gps->utc_hour    = 0U;
+    gps->utc_min     = 0U;
+    gps->utc_sec     = 0U;
+    gps->utc_time[0] = '\0';
 
-    const char *comma = strchr(line, ',');
-    if (comma == NULL) return false;
+    if (utc_field != NULL && strlen(utc_field) >= 6U)
+    {
+        unsigned int raw_t = (unsigned int)atoi(utc_field);
+        uint8_t h = (uint8_t)((raw_t / 10000U) % 24U);
+        uint8_t m = (uint8_t)((raw_t / 100U) % 100U);
+        uint8_t s = (uint8_t)(raw_t % 100U);
 
-    ptrdiff_t tag_len = comma - line;
-    if (tag_len < 5) return false;
-
-    return (strncmp(comma - 3, "GGA", 3) == 0);
+        gps->utc_hours   = h;
+        gps->utc_minutes = m;
+        gps->utc_seconds = s;
+        gps->utc_hour    = h;
+        gps->utc_min     = m;
+        gps->utc_sec     = s;
+        snprintf(gps->utc_time, sizeof(gps->utc_time), "%02u:%02u:%02u", h, m, s);
+    }
 }
 
-/**
- * @brief Découpage in-situ des champs NMEA séparés par des virgules
- *        (gère rigoureusement les champs vides sans les fusionner, contrairement à strtok)
- */
-static int split_nmea_fields(char *str, char *fields[], int max_fields)
+bool GroveGPS_Init(void)
 {
-    if (str == NULL || max_fields <= 0) return 0;
-
-    int count = 0;
-    fields[count++] = str;
-
-    while (*str != '\0' && count < max_fields)
+    if (GPS_UART_HANDLE.Instance == NULL)
     {
-        if (*str == '*' || *str == '\r' || *str == '\n')
-        {
-            *str = '\0';
-            break;
-        }
-        if (*str == ',')
-        {
-            *str = '\0';
-            fields[count++] = str + 1;
-        }
-        str++;
+        return false;
     }
-    return count;
+
+    GroveGPS_Flush();
+
+    HAL_StatusTypeDef st = HAL_UART_Receive_IT(&GPS_UART_HANDLE, &s_gps_rx_byte, 1U);
+    return (st == HAL_OK || st == HAL_BUSY);
 }
 
 bool GroveGPS_ReadLine(char *buffer, unsigned int max_len, unsigned int timeout_ms)
 {
-    if (buffer == NULL || max_len == 0) return false;
+    if (buffer == NULL || max_len == 0U) return false;
 
-    unsigned int count = 0;
+    unsigned int count = 0U;
+    uint8_t c = 0U;
     uint32_t start = HAL_GetTick();
 
-    while ((HAL_GetTick() - start) < timeout_ms)
+    while ((HAL_GetTick() - start) < timeout_ms && count < (max_len - 1U))
     {
-        uint8_t c = 0;
+        BSP_Watchdog_Refresh();
+
         if (gps_ring_pop(&c))
         {
             if (c == '\n')
@@ -249,11 +179,10 @@ bool GroveGPS_ReadLine(char *buffer, unsigned int max_len, unsigned int timeout_
 
             if (c == '$')
             {
-                /* Début d'une nouvelle phrase NMEA : réalignement immédiat */
                 count = 0;
                 buffer[count++] = (char)c;
             }
-            else if (count > 0 && count < (max_len - 1))
+            else if (count > 0 && count < (max_len - 1U))
             {
                 if (c != '\r')
                 {
@@ -276,95 +205,79 @@ bool GroveGPS_ReadGGA(GPS_Data *gps, unsigned int timeout_ms)
 
     while ((HAL_GetTick() - start) < timeout_ms)
     {
+        BSP_Watchdog_Refresh();
+
         uint32_t elapsed = HAL_GetTick() - start;
-        uint32_t remaining = (elapsed < timeout_ms) ? (timeout_ms - elapsed) : 0U;
-        if (remaining == 0U)
-        {
-            break;
-        }
+        uint32_t rem = (elapsed < timeout_ms) ? (timeout_ms - elapsed) : 0U;
+        if (rem == 0U) break;
+        if (rem > 500U) rem = 500U;
 
-        uint32_t line_to = remaining > 250U ? 250U : remaining;
-
-        if (!GroveGPS_ReadLine(line, sizeof(line), line_to))
-        {
+        if (!GroveGPS_ReadLine(line, sizeof(line), rem))
             continue;
-        }
 
-        if (!is_gga_sentence(line))
-        {
+        if (strncmp(line, "$GPGGA", 6) != 0 && strncmp(line, "$GNGGA", 6) != 0)
             continue;
-        }
 
         if (!nmea_verify_checksum(line))
-        {
             continue;
-        }
 
-        /* Trame GGA valide identifiée : initialisation et parsing */
         memset(gps, 0, sizeof(GPS_Data));
 
-        strncpy(gps->raw_sentence, line, sizeof(gps->raw_sentence) - 1);
-        gps->raw_sentence[sizeof(gps->raw_sentence) - 1] = '\0';
+        strncpy(gps->raw_sentence, line, sizeof(gps->raw_sentence) - 1U);
+        gps->raw_sentence[sizeof(gps->raw_sentence) - 1U] = '\0';
 
         char copy[96];
-        strncpy(copy, line, sizeof(copy) - 1);
-        copy[sizeof(copy) - 1] = '\0';
+        strncpy(copy, line, sizeof(copy) - 1U);
+        copy[sizeof(copy) - 1U] = '\0';
 
+        /* Découpage champ par champ préservant les colonnes vides */
         char *fields[16] = {0};
-        int count = split_nmea_fields(copy, fields, 16);
+        int field_count = 0;
+        char *cursor = copy;
+        fields[field_count++] = cursor;
 
-        if (count < 8)
+        while (*cursor != '\0' && field_count < 16)
         {
-            continue;
-        }
-
-        /* 1. Heure UTC (ex: "092750.000" ou "123519") */
-        if (fields[1] != NULL && strlen(fields[1]) >= 6)
-        {
-            uint8_t h = (uint8_t)((fields[1][0] - '0') * 10 + (fields[1][1] - '0'));
-            uint8_t m = (uint8_t)((fields[1][2] - '0') * 10 + (fields[1][3] - '0'));
-            uint8_t s = (uint8_t)((fields[1][4] - '0') * 10 + (fields[1][5] - '0'));
-            if (h < 24 && m < 60 && s < 60)
+            if (*cursor == ',' || *cursor == '*')
             {
-                gps->utc_hour = h;
-                gps->utc_min  = m;
-                gps->utc_sec  = s;
-                snprintf(gps->utc_time, sizeof(gps->utc_time), "%02u:%02u:%02u", h, m, s);
+                char sep = *cursor;
+                *cursor = '\0';
+                if (sep == '*')
+                {
+                    break;
+                }
+                fields[field_count++] = cursor + 1;
             }
+            ++cursor;
         }
 
-        /* 2. Qualité du fix & nombre de satellites */
-        gps->fix_quality = (fields[6] != NULL && fields[6][0] != '\0') ? (uint8_t)atoi(fields[6]) : 0U;
-        gps->satellites  = (fields[7] != NULL && fields[7][0] != '\0') ? (uint8_t)atoi(fields[7]) : 0U;
-        gps->valid       = (gps->fix_quality > 0U);
+        if (field_count < 8)
+            continue;
 
-        /* 3. Coordonnées Latitude & Longitude */
-        if (gps->valid && fields[2] != NULL && fields[2][0] != '\0' &&
-            fields[3] != NULL && fields[3][0] != '\0')
+        /* P1-12 : Parsing GGA complet (UTC, fix, satellites, lat/lon, hdop, alt) */
+        parse_utc_time(fields[1], gps);
+        gps->fix_quality = (fields[6] && fields[6][0] != '\0') ? (uint8_t)atoi(fields[6]) : 0U;
+        gps->satellites  = (fields[7] && fields[7][0] != '\0') ? (uint8_t)atoi(fields[7]) : 0U;
+        gps->valid       = (gps->fix_quality > 0U &&
+                            fields[2] && fields[2][0] != '\0' &&
+                            fields[4] && fields[4][0] != '\0');
+
+        if (gps->valid)
         {
-            gps->latitude = nmea_to_decimal(fields[2], fields[3][0]);
+            gps->latitude  = nmea_to_decimal(fields[2], (fields[3] && fields[3][0]) ? fields[3][0] : 'N');
+            gps->longitude = nmea_to_decimal(fields[4], (fields[5] && fields[5][0]) ? fields[5][0] : 'E');
         }
         else
         {
-            gps->latitude = 0.0;
-        }
-
-        if (gps->valid && fields[4] != NULL && fields[4][0] != '\0' &&
-            fields[5] != NULL && fields[5][0] != '\0')
-        {
-            gps->longitude = nmea_to_decimal(fields[4], fields[5][0]);
-        }
-        else
-        {
+            gps->latitude  = 0.0;
             gps->longitude = 0.0;
         }
 
-        /* 4. Précision HDOP et Altitude */
-        if (count > 8 && fields[8] != NULL && fields[8][0] != '\0')
+        if (field_count > 8 && fields[8] != NULL && fields[8][0] != '\0')
         {
             gps->hdop = (float)atof(fields[8]);
         }
-        if (count > 9 && fields[9] != NULL && fields[9][0] != '\0')
+        if (field_count > 9 && fields[9] != NULL && fields[9][0] != '\0')
         {
             gps->altitude_m = (float)atof(fields[9]);
         }

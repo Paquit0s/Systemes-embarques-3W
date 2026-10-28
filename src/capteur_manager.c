@@ -2,6 +2,7 @@
 #include "config_uart.h"
 #include "led_control.h"
 #include "mode_manager.h"
+#include "setup.h"
 #include "stm32l4xx_hal.h"
 #include "grove_rtc_ds1307.h"
 #include "grove_bme680.h"
@@ -50,10 +51,10 @@ bool CapteurManager_Init(void)
         printf("[WARN] BME680 non detecte au demarrage (nouvel essai a l'acquisition).\r\n");
     }
 
+    /* P2-3 : Calibration matérielle ADC1 12 bits + configuration canal PA4 */
     GroveLight_Init();
     if (!GroveGPS_Init())
-    {
-        printf("[WARN] GPS Air530Z non initialise au demarrage (UART4).\r\n");
+        printf("[WARN] Impossible d'armer la reception IT du GPS (UART4).\r\n");
     }
 
     return rtc_ok;
@@ -64,6 +65,8 @@ bool CapteurManager_Acquire(Mesure *out)
     const Config *c = ConfigUART_Get();
     Mesure m = {0};
     bool any_ok = false;
+
+    BSP_Watchdog_Refresh();
 
     /* --- 1. Horloge RTC (DS1307) --- */
     uint32_t t0 = HAL_GetTick();
@@ -82,6 +85,8 @@ bool CapteurManager_Acquire(Mesure *out)
         s_to_rtc = 0U;
         LedControl_ClearError(ERR_RTC_LECTURE);
     }
+
+    BSP_Watchdog_Refresh();
 
     /* --- 2. Capteur environnemental BME680 (T, HR, P) --- */
     t0 = HAL_GetTick();
@@ -117,11 +122,13 @@ bool CapteurManager_Acquire(Mesure *out)
         }
     }
 
-    /* --- 3. Capteur de luminosité Grove Light (ADC 12 bits : 0..4095) --- */
+    BSP_Watchdog_Refresh();
+
+    /* --- 3. Capteur de luminosité Grove Light (ADC 12 bits calibré : 0..4095, P2-3) --- */
     t0 = HAL_GetTick();
-    uint16_t raw_light = GroveLight_ReadRaw();
+    bool light_ok = GroveLight_Read(&m.light);
     uint32_t light_dt = HAL_GetTick() - t0;
-    if (raw_light == 0xFFFFU || light_dt > c->timeout_light_ms)
+    if (!light_ok || light_dt > c->timeout_light_ms)
     {
         m.statut_light = STATUT_NA;
         if (++s_to_light >= 2U)
@@ -133,7 +140,6 @@ bool CapteurManager_Acquire(Mesure *out)
     else
     {
         s_to_light = 0U;
-        m.light = raw_light;
         m.statut_light = (m.light < c->light_min || m.light > c->light_max)
                        ? STATUT_INCOHERENT : STATUT_OK;
         if (m.statut_light == STATUT_OK)
@@ -146,7 +152,9 @@ bool CapteurManager_Acquire(Mesure *out)
         }
     }
 
-    /* --- 4. GPS Air530Z (1 cycle sur 2 en MODE_ECO conformément au Livrable 2) --- */
+    BSP_Watchdog_Refresh();
+
+    /* --- 4. GPS Air530Z (P2-6 : lecture 1 cycle sur 2 en MODE_ECO) --- */
     bool read_gps_this_cycle = true;
     if (ModeManager_GetMode() == MODE_ECO)
     {
@@ -196,6 +204,8 @@ bool CapteurManager_Acquire(Mesure *out)
             }
         }
     }
+
+    BSP_Watchdog_Refresh();
 
     s_last = m;
     if (out != NULL)

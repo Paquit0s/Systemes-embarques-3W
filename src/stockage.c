@@ -2,6 +2,7 @@
 #include "sd_diskio_spi.h"
 #include "config_uart.h"
 #include "led_control.h"
+#include "setup.h"
 #include "ff.h"
 #include <stdio.h>
 #include <string.h>
@@ -72,7 +73,7 @@ static bool open_active_file(const char *filename)
 }
 
 /**
- * @brief Archive le fichier courant AAMMJJ_0.LOG vers AAMMJJ_N.LOG (N = 1..99)
+ * @brief Archive le fichier courant AAMMJJ_0.LOG vers AAMMJJ_N.LOG
  *        puis repart sur un fichier AAMMJJ_0.LOG vierge (Livrable 1 & 2, P1-15).
  */
 static bool rotate_archive_file(const char yymmdd[7])
@@ -88,10 +89,6 @@ static bool rotate_archive_file(const char yymmdd[7])
     char arch_name[16];
     snprintf(src_name, sizeof(src_name), "%s_0.LOG", yymmdd);
 
-    /* Recherche du premier index libre AAMMJJ_1.LOG .. AAMMJJ_99.LOG (format 8.3 : 6+1+2 = 9? Non: 6+1+1 = 8 chars !)
-     * Attention FAT 8.3 (_USE_LFN = 0) : le nom avant '.LOG' doit faire <= 8 caractères !
-     * "261024_1" = 8 caractères exacts (indices 1..9), et "261024A0".."261024Z9" si > 9 !
-     */
     bool found_slot = false;
     FILINFO fno;
 
@@ -123,7 +120,6 @@ static bool rotate_archive_file(const char yymmdd[7])
 
     if (!found_slot)
     {
-        /* Stratégie de repli si tous les slots sont pleins : écraser _1.LOG */
         snprintf(arch_name, sizeof(arch_name), "%s_1.LOG", yymmdd);
         (void)f_unlink(arch_name);
     }
@@ -214,21 +210,23 @@ static size_t format_csv_line(const Mesure *m, char *buf, size_t cap)
 
 bool Stockage_Init(void)
 {
+    BSP_Watchdog_Refresh();
+
     if (s_file_open)
     {
         (void)f_sync(&s_fil);
         (void)f_close(&s_fil);
         s_file_open = false;
     }
-    if (s_mounted)
-    {
-        (void)f_mount(NULL, "", 0);
-        s_mounted = false;
-    }
 
+    /* Démontage inconditionnel avant réinitialisation SPI + FatFs (P2-5 : reprise à chaud) */
+    (void)f_mount(NULL, "", 0);
+    s_mounted = false;
     SD_DiskIO_Invalidate();
 
     FRESULT fr = f_mount(&s_fs, "", 1);
+    BSP_Watchdog_Refresh();
+
     if (fr != FR_OK)
     {
         printf("[SD] Echec montage FatFs (FRESULT=%d)\r\n", (int)fr);
@@ -252,7 +250,9 @@ bool Stockage_LogMesure(const Mesure *m)
         return false;
     }
 
-    /* Tentative de reprise automatique si la carte SD n'était pas montée */
+    BSP_Watchdog_Refresh();
+
+    /* P2-5 : Reprise automatique si la carte SD avait été retirée ou absente */
     if (!s_mounted)
     {
         if (!Stockage_Init())
@@ -266,7 +266,6 @@ bool Stockage_LogMesure(const Mesure *m)
     make_base_date(&m->timestamp, yymmdd);
     snprintf(target_name, sizeof(target_name), "%s_0.LOG", yymmdd);
 
-    /* Changement de jour : fermer l'ancien fichier et ouvrir celui du nouveau jour */
     if (s_file_open && strcmp(s_active_name, target_name) != 0)
     {
         (void)f_sync(&s_fil);
@@ -278,6 +277,7 @@ bool Stockage_LogMesure(const Mesure *m)
     {
         if (!open_active_file(target_name))
         {
+            (void)f_mount(NULL, "", 0);
             s_mounted = false;
             SD_DiskIO_Invalidate();
             LedControl_ReportError(ERR_SD_ECRITURE, CAPTEUR_SD);
@@ -293,7 +293,6 @@ bool Stockage_LogMesure(const Mesure *m)
         return false;
     }
 
-    /* Vérification de la limite de taille de fichier SD avant écriture (P1-15) */
     const Config *cfg = ConfigUART_Get();
     uint32_t limit_bytes = (cfg != NULL && cfg->sd_limit_bytes >= 256U)
                          ? cfg->sd_limit_bytes : 1048576UL;
@@ -302,6 +301,9 @@ bool Stockage_LogMesure(const Mesure *m)
     {
         if (!rotate_archive_file(yymmdd))
         {
+            (void)f_mount(NULL, "", 0);
+            s_mounted = false;
+            SD_DiskIO_Invalidate();
             LedControl_ReportError(ERR_SD_ECRITURE, CAPTEUR_SD);
             printf("[SD] Echec rotation/archivage de %s\r\n", target_name);
             return false;
@@ -313,11 +315,12 @@ bool Stockage_LogMesure(const Mesure *m)
     if (fr != FR_OK)
     {
         (void)f_close(&s_fil);
+        (void)f_mount(NULL, "", 0);
         s_file_open = false;
         s_mounted   = false;
         SD_DiskIO_Invalidate();
         LedControl_ReportError(ERR_SD_ECRITURE, CAPTEUR_SD);
-        printf("[SD] Erreur d'ecriture (FRESULT=%d)\r\n", (int)fr);
+        printf("[SD] Erreur d'ecriture (FRESULT=%d) -> reprise armee\r\n", (int)fr);
         return false;
     }
 
@@ -333,14 +336,19 @@ bool Stockage_LogMesure(const Mesure *m)
     if (fr != FR_OK)
     {
         (void)f_close(&s_fil);
+        (void)f_mount(NULL, "", 0);
         s_file_open = false;
         s_mounted   = false;
         SD_DiskIO_Invalidate();
         LedControl_ReportError(ERR_SD_ECRITURE, CAPTEUR_SD);
-        printf("[SD] Erreur flush f_sync (FRESULT=%d)\r\n", (int)fr);
+        printf("[SD] Erreur flush f_sync (FRESULT=%d) -> reprise armee\r\n", (int)fr);
         return false;
     }
 
+    BSP_Watchdog_Refresh();
+    LedControl_ClearError(ERR_SD_ABSENTE);
+    LedControl_ClearError(ERR_SD_ECRITURE);
+    LedControl_ClearError(ERR_SD_PLEINE);
     return true;
 }
 
@@ -354,6 +362,8 @@ void Stockage_Flush(void)
 
 void Stockage_Close(void)
 {
+    BSP_Watchdog_Refresh();
+
     if (s_file_open)
     {
         (void)f_sync(&s_fil);

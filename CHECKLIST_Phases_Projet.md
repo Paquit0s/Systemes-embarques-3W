@@ -1,6 +1,6 @@
 # Checklist — travail restant (Projet 3W, Équipe 7)
 
-> **État de référence : 21/10/2026 14:20** — HEAD `flo b8a751d` + modifications locales en cours.
+> **État de référence : 24/10/2026 23:40** — Branche `paquito/phase-2` : **43/72 cases cochées** (Phase 0 : 9/9 · Phase 1 : 20/20 · Phase 2 : 6/7).
 > ⚠️ Une autre session travaille en parallèle : vérifier `git status` avant d'éditer un fichier.
 > Légende : `[x]` = fait/vérifié · `[ ]` = à faire · 🔴 bloquant · 🟠 majeur · 🟡 moyen · 🔵 qualité
 > Cocher : remplacer `[ ]` par `[x]` (éditeur Markdown, VS Code, GitHub…).
@@ -71,12 +71,12 @@
 
 ## Phase 2 — Robustesse & performances 🟡
 
-- [ ] **P2-1** Horloge 80 MHz PLL (cohérence `F_CPU`) + recalcul `TIMINGR` I2C et prescaler SPI.
-- [ ] **P2-2** SPI SD : init ≤ 400 kHz puis 4–8 MHz ; CMD16/CMD59 ; timeouts d'init adaptés.
-- [ ] **P2-3** Calibration ADC + conversion lumière (lux/% ou seuils) documentée (ADC 12 bits → 0..4095).
-- [ ] **P2-4** UART console en IT/DMA + ring buffer (plus de `HAL_UART_Receive` bloquant).
-- [ ] **P2-5** Watchdog IWDG + reprise si SD retirée/absente ; arrêt propre du fichier en MAINTENANCE.
-- [ ] **P2-6** Comportements par mode : ECO (intervalle ×2, GPS 1 cycle/2), CONFIG (30 min d'inactivité), MAINTENANCE (live UART, pas d'écriture SD).
+- [x] **P2-1** Horloge 80 MHz PLL (cohérence `F_CPU`) + recalcul `TIMINGR` I2C et prescaler SPI.
+- [x] **P2-2** SPI SD : init ≤ 400 kHz puis 4–8 MHz ; CMD16/CMD59 ; timeouts d'init adaptés.
+- [x] **P2-3** Calibration ADC + conversion lumière (lux/% ou seuils) documentée (ADC 12 bits → 0..4095).
+- [x] **P2-4** UART console en IT/DMA + ring buffer (plus de `HAL_UART_Receive` bloquant).
+- [x] **P2-5** Watchdog IWDG + reprise si SD retirée/absente ; arrêt propre du fichier en MAINTENANCE.
+- [x] **P2-6** Comportements par mode : ECO (intervalle ×2, GPS 1 cycle/2), CONFIG (30 min d'inactivité), MAINTENANCE (live UART, pas d'écriture SD).
 - [ ] **P2-7** Tests de transitions sur plateau + chronométrage (appui 5 s, timeout 30 min).
 
 ---

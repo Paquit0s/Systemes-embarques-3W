@@ -3,13 +3,14 @@
 #include "board_pins.h"
 
 /* =========================================================================
- * DÉFINITION UNIQUE DES HANDLES MATÉRIELS (Couche BSP - P0-7)
+ * DÉFINITION UNIQUE DES HANDLES MATÉRIELS (Couche BSP - P0-7 & Phase 2)
  * ========================================================================= */
 I2C_HandleTypeDef  hi2c1;
 SPI_HandleTypeDef  hspi1;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart4;
 ADC_HandleTypeDef  hadc1;
+IWDG_HandleTypeDef hiwdg;
 
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
@@ -36,7 +37,21 @@ void SysTick_Handler(void)
 }
 
 /**
+ * @brief Interruption matérielle de l'USART2 (Console série non bloquante P2-4)
+ */
+void USART2_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&huart2);
+}
+
+void UART4_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&huart4);
+}
+
+/**
  * @brief Initialisation du bus I2C1 (PB8=SCL, PB9=SDA)
+ * @note  P2-1 : TIMINGR recalculé pour PCLK1 = 80 MHz (Standard Mode 100 kHz : 0x10909CEC)
  */
 static void MX_I2C1_Init(void)
 {
@@ -53,7 +68,7 @@ static void MX_I2C1_Init(void)
     HAL_GPIO_Init(GPIOB, &gpio);
 
     hi2c1.Instance              = I2C1;
-    hi2c1.Init.Timing           = 0x00707CBB;
+    hi2c1.Init.Timing           = 0x10909CEC; /* 100 kHz @ PCLK1 = 80 MHz (P2-1) */
     hi2c1.Init.OwnAddress1      = 0;
     hi2c1.Init.AddressingMode   = I2C_ADDRESSINGMODE_7BIT;
     hi2c1.Init.DualAddressMode  = I2C_DUALADDRESS_DISABLE;
@@ -68,6 +83,7 @@ static void MX_I2C1_Init(void)
 /**
  * @brief Initialisation du bus SPI1 (PA5=SCK, PA6=MISO, PA7=MOSI, PB5=CS)
  * @note  PA5 est strictement réservée à SPI1_SCK (ne jamais utiliser LD2).
+ *        P2-1 / P2-2 : À 80 MHz, PRESCALER_256 donne 312,5 kHz (<= 400 kHz pour init SD).
  */
 static void MX_SPI1_Init(void)
 {
@@ -105,7 +121,7 @@ static void MX_SPI1_Init(void)
     hspi1.Init.CLKPolarity       = SPI_POLARITY_LOW;
     hspi1.Init.CLKPhase          = SPI_PHASE_1EDGE;
     hspi1.Init.NSS               = SPI_NSS_SOFT;
-    hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+    hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256; /* 312.5 kHz @ 80 MHz */
     hspi1.Init.FirstBit          = SPI_FIRSTBIT_MSB;
     hspi1.Init.TIMode            = SPI_TIMODE_DISABLE;
     hspi1.Init.CRCCalculation    = SPI_CRCCALCULATION_DISABLE;
@@ -115,33 +131,66 @@ static void MX_SPI1_Init(void)
 }
 
 /**
- * @brief Configuration de l'horloge système (MSI 4 MHz en Phase 0)
+ * @brief Change dynamiquement le prescaler du bus SPI1 (P2-1 / P2-2)
+ *        Utile pour passer de <= 400 kHz (init SD : PRESCALER_256 = 312.5 kHz)
+ *        à 5 MHz (transfert SD : PRESCALER_16 = 5 MHz @ 80 MHz).
+ */
+bool BSP_SPI1_SetPrescaler(uint32_t BaudRatePrescaler)
+{
+    __HAL_SPI_DISABLE(&hspi1);
+    hspi1.Init.BaudRatePrescaler = BaudRatePrescaler;
+    if (HAL_SPI_Init(&hspi1) != HAL_OK)
+    {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Configuration de l'horloge système à 80 MHz via PLL (P2-1)
+ *        Source : MSI 4 MHz -> PLLM = 1, PLLN = 40, PLLR = 2 => SYSCLK = 80 MHz.
+ *        LSI (32 kHz) activé pour le Watchdog indépendant (IWDG - P2-5).
  */
 void SystemClock_Config(void)
 {
     RCC_OscInitTypeDef osc = {0};
     RCC_ClkInitTypeDef clk = {0};
 
+    __HAL_RCC_PWR_CLK_ENABLE();
     HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    osc.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+    osc.OscillatorType      = RCC_OSCILLATORTYPE_MSI | RCC_OSCILLATORTYPE_LSI;
     osc.MSIState            = RCC_MSI_ON;
-    osc.MSIClockRange       = RCC_MSIRANGE_6;
     osc.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
+    osc.MSIClockRange       = RCC_MSIRANGE_6; /* 4 MHz */
+    osc.LSIState            = RCC_LSI_ON;     /* 32 kHz pour IWDG (P2-5) */
+    osc.PLL.PLLState        = RCC_PLL_ON;
+    osc.PLL.PLLSource       = RCC_PLLSOURCE_MSI;
+    osc.PLL.PLLM            = 1;              /* 4 MHz / 1 = 4 MHz */
+    osc.PLL.PLLN            = 40;             /* 4 MHz * 40 = 160 MHz VCO */
+    osc.PLL.PLLP            = RCC_PLLP_DIV7;
+    osc.PLL.PLLQ            = RCC_PLLQ_DIV2;
+    osc.PLL.PLLR            = RCC_PLLR_DIV2;  /* 160 MHz / 2 = 80 MHz SYSCLK */
 
-    HAL_RCC_OscConfig(&osc);
+    if (HAL_RCC_OscConfig(&osc) != HAL_OK)
+    {
+        while (1) {}
+    }
 
     clk.ClockType = RCC_CLOCKTYPE_HCLK   |
                     RCC_CLOCKTYPE_SYSCLK |
                     RCC_CLOCKTYPE_PCLK1  |
                     RCC_CLOCKTYPE_PCLK2;
 
-    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
-    clk.AHBCLKDivider  = RCC_SYSCLK_DIV1;
-    clk.APB1CLKDivider = RCC_HCLK_DIV1;
-    clk.APB2CLKDivider = RCC_HCLK_DIV1;
+    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.AHBCLKDivider  = RCC_SYSCLK_DIV1; /* HCLK  = 80 MHz */
+    clk.APB1CLKDivider = RCC_HCLK_DIV1;   /* PCLK1 = 80 MHz */
+    clk.APB2CLKDivider = RCC_HCLK_DIV1;   /* PCLK2 = 80 MHz */
 
-    HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_0);
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_4) != HAL_OK)
+    {
+        while (1) {}
+    }
 }
 
 /**
@@ -163,6 +212,10 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uartHandle)
         GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
         GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
         HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+        /* P2-4 : Activation de l'interruption USART2 pour réception IT + ring buffer */
+        HAL_NVIC_SetPriority(USART2_IRQn, 5, 0);
+        HAL_NVIC_EnableIRQ(USART2_IRQn);
     }
     else if (uartHandle->Instance == UART4)
     {
@@ -176,6 +229,10 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uartHandle)
         GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
         GPIO_InitStruct.Alternate = GPIO_AF8_UART4;
         HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+        /* P1-12 : Activation de l'interruption UART4 pour le ring buffer GPS */
+        HAL_NVIC_SetPriority(UART4_IRQn, 6, 0);
+        HAL_NVIC_EnableIRQ(UART4_IRQn);
     }
 }
 
@@ -226,6 +283,7 @@ static void MX_UART4_Init(void)
 
 /**
  * @brief Initialisation de l'ADC1 (Capteur de lumière sur PA4 / Canal 9, 12 bits)
+ * @note  À HCLK = 80 MHz, ADC_CLOCK_SYNC_PCLK_DIV4 donne 20 MHz (conforme spec STM32L4 <= 80 MHz)
  */
 static void MX_ADC1_Init(void)
 {
@@ -257,6 +315,42 @@ static void MX_ADC1_Init(void)
     if (HAL_ADC_Init(&hadc1) != HAL_OK)
     {
         while (1) {}
+    }
+}
+
+/**
+ * @brief Initialisation du Watchdog indépendant IWDG (P2-5)
+ * @param timeout_ms Délai avant reset matériel (ex. 12000 ms).
+ *        Basé sur LSI = 32 kHz et Prescaler = 256 (125 ticks/s, max ~32.7 s).
+ */
+bool BSP_Watchdog_Init(uint32_t timeout_ms)
+{
+    uint32_t reload = (timeout_ms * 125U) / 1000U;
+    if (reload == 0U)
+    {
+        reload = 1U;
+    }
+    if (reload > 0x0FFFU)
+    {
+        reload = 0x0FFFU;
+    }
+
+    hiwdg.Instance       = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_256;
+    hiwdg.Init.Window    = IWDG_WINDOW_DISABLE;
+    hiwdg.Init.Reload    = reload;
+
+    return (HAL_IWDG_Init(&hiwdg) == HAL_OK);
+}
+
+/**
+ * @brief Rafraîchit le compteur du Watchdog IWDG (P2-5)
+ */
+void BSP_Watchdog_Refresh(void)
+{
+    if (hiwdg.Instance == IWDG)
+    {
+        (void)HAL_IWDG_Refresh(&hiwdg);
     }
 }
 

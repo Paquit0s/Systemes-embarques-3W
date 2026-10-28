@@ -33,9 +33,8 @@ bool GroveGPS_ReadLine(char *buffer, unsigned int max_len, unsigned int timeout_
  */
 bool GroveGPS_ReadGGA(GPS_Data *gps, unsigned int timeout_ms);
 
-/**
- * @brief Gestionnaire d'interruption UART4 appelé à chaque octet reçu du GPS.
- */
-void GroveGPS_UART_IRQHandler(void);
+/* Hooks d'interruption UART4 pour le ring buffer GPS (P1-12 / P2-4) */
+void GroveGPS_RxCpltHook(void);
+void GroveGPS_ErrorHook(void);
 
 #endif
