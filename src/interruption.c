@@ -9,7 +9,7 @@
  *  Si un bouton Grove simple actif-haut est utilisé à la place, passer BTN_ACTIVE_LOW à 0.
  */
 #define BTN_ACTIVE_LOW          1
-#define BTN_ENABLE_GROVE_D3_RED 1
+#define BTN_ENABLE_GROVE_D3_RED 0
 
 #define DEBOUNCE_MS             30U
 #define LONG_PRESS_MS           5000U
@@ -120,9 +120,9 @@ void Interruption_Init(void)
     s_qhead = 0U;
     s_qtail = 0U;
 
-    /* Stabilisation courte des résistances de pull-up avant lecture de l'état au boot */
+    /* Stabilisation des résistances de pull-up (filtre RC 100nF sur PC13) avant lecture au boot */
     uint32_t t0 = HAL_GetTick();
-    while ((HAL_GetTick() - t0) < 5U) {}
+    while ((HAL_GetTick() - t0) < 25U) {}
 
     uint32_t now = HAL_GetTick();
     for (int i = 0; i < (int)BTN_COUNT; ++i)
