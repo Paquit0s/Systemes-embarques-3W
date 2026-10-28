@@ -43,14 +43,24 @@ bool CapteurManager_Init(void)
 
     /* Scan I2C au démarrage pour diagnostic matériel (M1-7) */
     printf("[I2C SCAN] Recherche peripheriques I2C1 (PB8=SCL, PB9=SDA)...\r\n");
+
+    /* Vérification de l'état de repos des lignes (doivent être à 1 avec pull-up) */
+    bool scl_idle = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8) == GPIO_PIN_SET);
+    bool sda_idle = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_9) == GPIO_PIN_SET);
+    if (!scl_idle || !sda_idle)
+    {
+        printf("[I2C ALERTE] Ligne(s) I2C bloquee(s) a la masse ! SCL=%d, SDA=%d\r\n", (int)scl_idle, (int)sda_idle);
+        printf("[I2C ALERTE] -> Verifiez qu'aucun fil SCL/SDA n'est en court-circuit avec GND ou mal insere.\r\n");
+    }
+
     uint8_t count = 0;
     for (uint8_t addr = 0x08; addr < 0x78; ++addr)
     {
-        if (HAL_I2C_IsDeviceReady(&GROVE_I2C_HANDLE, (uint16_t)(addr << 1), 2, 5) == HAL_OK)
+        if (HAL_I2C_IsDeviceReady(&GROVE_I2C_HANDLE, (uint16_t)(addr << 1), 3U, 20U) == HAL_OK)
         {
             const char *label = "";
             if (addr == 0x68) label = " -> RTC DS1307";
-            else if (addr == 0x76 || addr == 0x77) label = " -> BME680 (ou BME280)";
+            else if (addr == 0x76 || addr == 0x77) label = " -> BME (ou BMP)";
             printf("  - Dispositif detecte a l'adresse 0x%02X%s\r\n", addr, label);
             count++;
         }
@@ -58,6 +68,26 @@ bool CapteurManager_Init(void)
     if (count == 0)
     {
         printf("[I2C SCAN] Aucun peripherique detecte ! Verifiez que le switch du Base Shield est sur 5V.\r\n");
+    }
+
+    /* Test spécifique de lecture directe registre 0xD0 (Chip ID) sur 0x76 et 0x77 */
+    uint8_t chip_id_76 = 0U, chip_id_77 = 0U;
+    HAL_StatusTypeDef st_76 = HAL_I2C_Mem_Read(&GROVE_I2C_HANDLE, (0x76U << 1), 0xD0U, I2C_MEMADD_SIZE_8BIT, &chip_id_76, 1U, 50U);
+    HAL_StatusTypeDef st_77 = HAL_I2C_Mem_Read(&GROVE_I2C_HANDLE, (0x77U << 1), 0xD0U, I2C_MEMADD_SIZE_8BIT, &chip_id_77, 1U, 50U);
+
+    if (st_76 == HAL_OK)
+    {
+        printf("[I2C DIAG] Reponse sur 0x76 ! Chip ID lu: 0x%02X\r\n", chip_id_76);
+    }
+    if (st_77 == HAL_OK)
+    {
+        printf("[I2C DIAG] Reponse sur 0x77 ! Chip ID lu: 0x%02X\r\n", chip_id_77);
+    }
+    if (st_76 != HAL_OK && st_77 != HAL_OK)
+    {
+        printf("[I2C DIAG] Aucune reponse BME sur 0x76 (st=%d, err=0x%lX) ni 0x77 (st=%d, err=0x%lX)\r\n",
+               (int)st_76, (unsigned long)GROVE_I2C_HANDLE.ErrorCode,
+               (int)st_77, (unsigned long)GROVE_I2C_HANDLE.ErrorCode);
     }
 
     bool rtc_ok = GroveRTC_Init();
