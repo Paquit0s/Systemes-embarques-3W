@@ -47,26 +47,26 @@ static bool button_is_pressed_hw(ButtonId id)
         bool red_b1 = (HAL_GPIO_ReadPin(BUTTON_USER_PORT, BUTTON_USER_PIN) == GPIO_PIN_RESET);
 
 #if BTN_ENABLE_GROVE_RED
-    /* 2. Bouton Grove Rouge sur D3 (PB3) : actif a l'etat HAUT */
-    bool red_d3 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_SET);
-    /* 3. Bouton Grove Rouge alternatif sur D5 (PB4) : actif a l'etat HAUT */
-    bool red_d5 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4) == GPIO_PIN_SET);
-    /* 4. Bouton Grove Rouge alternatif sur D8 (PA9) : actif a l'etat HAUT */
-    bool red_d8 = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9) == GPIO_PIN_SET);
-    /* 5. Bouton Grove Rouge alternatif sur D9 (PC7) : actif a l'etat HAUT */
-    bool red_d9 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7) == GPIO_PIN_SET);
+        /* 2. Bouton Grove Rouge sur D3 (PB3) : actif a l'etat BAS (pull-up) */
+        bool red_d3 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_RESET);
+        /* 3. Bouton Grove Rouge alternatif sur D5 (PB4) : actif a l'etat BAS (pull-up) */
+        bool red_d5 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4) == GPIO_PIN_RESET);
+        /* 4. Bouton Grove Rouge alternatif sur D8 (PA9) : actif a l'etat BAS (pull-up) */
+        bool red_d8 = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9) == GPIO_PIN_RESET);
+        /* 5. Bouton Grove Rouge alternatif sur D9 (PC7) : actif a l'etat BAS (pull-up) */
+        bool red_d9 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7) == GPIO_PIN_RESET);
 
-    return (red_b1 || red_d3 || red_d5 || red_d8 || red_d9);
+        return (red_b1 || red_d3 || red_d5 || red_d8 || red_d9);
 #else
-    return red_b1;
+        return red_b1;
 #endif
-}
-if (id == BTN_GREEN)
-{
-    /* Bouton Grove vert sur D2 (PA10) : actif a l'etat HAUT */
-    return (HAL_GPIO_ReadPin(BUTTON1_PORT, BUTTON1_PIN) == GPIO_PIN_SET);
-}
-return false;
+    }
+    if (id == BTN_GREEN)
+    {
+        /* Bouton Grove vert sur D2 (PA10) : actif a l'etat BAS (pull-up) */
+        return (HAL_GPIO_ReadPin(BUTTON1_PORT, BUTTON1_PIN) == GPIO_PIN_RESET);
+    }
+    return false;
 }
 
 static void push_event(EventType t, ButtonId id, uint32_t tick, uint32_t dur)
@@ -121,25 +121,25 @@ void Interruption_Init(void)
     gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(BUTTON_USER_PORT, &gpio);
 
-    /* Bouton Vert Grove D2 (PA10 -> EXTI15_10, actif HAUT avec pull-down) */
+    /* Bouton Vert Grove D2 (PA10 -> EXTI15_10, actif BAS avec pull-up) */
     gpio.Pin  = BUTTON1_PIN;
-    gpio.Pull = GPIO_PULLDOWN;
+    gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(BUTTON1_PORT, &gpio);
 
 #if BTN_ENABLE_GROVE_RED
-    /* Boutons Rouges Grove : D3 (PB3 -> EXTI3), D5 (PB4 -> EXTI4) avec pull-down */
+    /* Boutons Rouges Grove : D3 (PB3 -> EXTI3), D5 (PB4 -> EXTI4) avec pull-up */
     gpio.Pin  = GPIO_PIN_3 | GPIO_PIN_4;
-    gpio.Pull = GPIO_PULLDOWN;
+    gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOB, &gpio);
 
-    /* Bouton Rouge Grove alternatif : D8 (PA9 -> EXTI9_5) avec pull-down */
+    /* Bouton Rouge Grove alternatif : D8 (PA9 -> EXTI9_5) avec pull-up */
     gpio.Pin  = GPIO_PIN_9;
-    gpio.Pull = GPIO_PULLDOWN;
+    gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOA, &gpio);
 
-    /* Bouton Rouge Grove alternatif : D9 (PC7 -> EXTI9_5) avec pull-down */
+    /* Bouton Rouge Grove alternatif : D9 (PC7 -> EXTI9_5) avec pull-up */
     gpio.Pin  = GPIO_PIN_7;
-    gpio.Pull = GPIO_PULLDOWN;
+    gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOC, &gpio);
 #endif
 
