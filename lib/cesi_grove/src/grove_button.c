@@ -19,10 +19,10 @@ void GroveButton_Init(void)
 
 bool GroveButton1_IsPressed(void)
 {
-    return HAL_GPIO_ReadPin(BUTTON1_PORT, BUTTON1_PIN) == GPIO_PIN_RESET;
+    return HAL_GPIO_ReadPin(BUTTON1_PORT, BUTTON1_PIN) == GPIO_PIN_SET;
 }
 
 bool GroveButton2_IsPressed(void)
 {
-    return HAL_GPIO_ReadPin(BUTTON2_PORT, BUTTON2_PIN) == GPIO_PIN_RESET;
+    return HAL_GPIO_ReadPin(BUTTON2_PORT, BUTTON2_PIN) == GPIO_PIN_SET;
 }

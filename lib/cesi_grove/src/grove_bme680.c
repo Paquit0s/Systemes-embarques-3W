@@ -1,6 +1,7 @@
 #include "grove_bme680.h"
 #include "board_pins.h"
 #include <string.h>
+#include <stdio.h>
 
 #define BME680_ADDR_PRIMARY    (0x76U << 1)
 #define BME680_ADDR_SECONDARY  (0x77U << 1)
@@ -131,13 +132,24 @@ bool GroveBME680_Init(void)
 
     /* Test de l'adresse I2C 0x76 (Seeed Grove par défaut) puis 0x77 */
     s_bme_addr = BME680_ADDR_PRIMARY;
-    if (!GroveBME680_ReadChipId(&id) || id != BME680_CHIP_ID)
+    bool found = (GroveBME680_ReadChipId(&id) && id == BME680_CHIP_ID);
+    if (!found)
     {
+        uint8_t id2 = 0U;
         s_bme_addr = BME680_ADDR_SECONDARY;
-        if (!GroveBME680_ReadChipId(&id) || id != BME680_CHIP_ID)
+        if (GroveBME680_ReadChipId(&id2) && id2 == BME680_CHIP_ID)
         {
-            return false;
+            found = true;
+            id = id2;
         }
+    }
+    if (!found)
+    {
+        if (id != 0U)
+        {
+            printf("[BME] Chip ID lu: 0x%02X (attendu: 0x61 BME680). Module BME280 (0x60) ou BMP280 (0x58) ?\r\n", id);
+        }
+        return false;
     }
 
     /* Soft reset + attente courte de démarrage interne (5 ms) */

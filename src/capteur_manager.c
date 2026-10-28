@@ -1,4 +1,5 @@
 #include "capteur_manager.h"
+#include "board_pins.h"
 #include "config_uart.h"
 #include "led_control.h"
 #include "mode_manager.h"
@@ -39,6 +40,25 @@ bool CapteurManager_Init(void)
     s_to_gps   = 0U;
     s_to_rtc   = 0U;
     s_eco_skip_next_gps = false;
+
+    /* Scan I2C au démarrage pour diagnostic matériel (M1-7) */
+    printf("[I2C SCAN] Recherche peripheriques I2C1 (PB8=SCL, PB9=SDA)...\r\n");
+    uint8_t count = 0;
+    for (uint8_t addr = 0x08; addr < 0x78; ++addr)
+    {
+        if (HAL_I2C_IsDeviceReady(&GROVE_I2C_HANDLE, (uint16_t)(addr << 1), 2, 5) == HAL_OK)
+        {
+            const char *label = "";
+            if (addr == 0x68) label = " -> RTC DS1307";
+            else if (addr == 0x76 || addr == 0x77) label = " -> BME680 (ou BME280)";
+            printf("  - Dispositif detecte a l'adresse 0x%02X%s\r\n", addr, label);
+            count++;
+        }
+    }
+    if (count == 0)
+    {
+        printf("[I2C SCAN] Aucun peripherique detecte ! Verifiez que le switch du Base Shield est sur 5V.\r\n");
+    }
 
     bool rtc_ok = GroveRTC_Init();
     if (!rtc_ok)

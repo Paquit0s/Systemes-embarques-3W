@@ -51,32 +51,36 @@ bool ModeManager_RequestMode(ModeSysteme target)
     return true;
 }
 
-/* Transitions sur appui long 5 s des boutons (P1-8) */
+/* Transitions sur événements boutons (P1-8 / P2-7) */
 static void on_event(const Event *e)
 {
-    if (e->type != EVENT_BTN_LONG)
-    {
-        return;
-    }
-
+    /* 1. Bouton VERT (PA10 / Port Grove D2) : bascule STANDARD <-> ECO
+     *    Accepte l'appui court (< 5s) ET l'appui long (5s) */
     if (e->button == BTN_GREEN)
     {
-        if (s_mm.current == MODE_STANDARD)
+        if (e->type == EVENT_BTN_LONG || (e->type == EVENT_BTN_RELEASE && e->duration_ms < 5000U))
         {
-            (void)ModeManager_RequestMode(MODE_ECO);
-        }
-        else if (s_mm.current == MODE_ECO)
-        {
-            (void)ModeManager_RequestMode(MODE_STANDARD);
+            if (s_mm.current == MODE_STANDARD)
+            {
+                (void)ModeManager_RequestMode(MODE_ECO);
+            }
+            else if (s_mm.current == MODE_ECO)
+            {
+                (void)ModeManager_RequestMode(MODE_STANDARD);
+            }
         }
     }
+    /* 2. Bouton ROUGE (B1 Nucleo PC13 ou Grove D3) */
     else if (e->button == BTN_RED)
     {
-        if (s_mm.current == MODE_STANDARD || s_mm.current == MODE_ECO)
+        /* Entrée en MAINTENANCE : appui long 5 secondes requis depuis STANDARD ou ECO */
+        if (e->type == EVENT_BTN_LONG && (s_mm.current == MODE_STANDARD || s_mm.current == MODE_ECO))
         {
             (void)ModeManager_RequestMode(MODE_MAINTENANCE);
         }
-        else if (s_mm.current == MODE_MAINTENANCE)
+        /* Sortie de MAINTENANCE : appui court (< 5s) OU appui long (5s) pour retour au mode précédent */
+        else if (s_mm.current == MODE_MAINTENANCE &&
+                 (e->type == EVENT_BTN_LONG || (e->type == EVENT_BTN_RELEASE && e->duration_ms < 5000U)))
         {
             (void)ModeManager_RequestMode(s_mm.previous);
         }
