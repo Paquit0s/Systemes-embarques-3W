@@ -92,7 +92,7 @@ typedef enum {
     STATUT_INCOHERENT
 } StatutMesure;
 
-/* --- P1-3 : Configuration (valeurs par défaut = spec Livrable 2) --- */
+/* --- P1-3 : Configuration (valeurs par défaut = spec Livrable 1 & 2) --- */
 typedef struct {
     uint32_t log_interval_s;
     uint32_t timeout_bme680_ms;
@@ -101,8 +101,14 @@ typedef struct {
     uint32_t timeout_rtc_ms;
     float    temp_min, temp_max;
     float    hum_min, hum_max;
+    float    hygr_mint, hygr_maxt;
     float    press_min, press_max;
     uint16_t light_min, light_max;
+    uint16_t lumin_low, lumin_high;
+    uint8_t  lumin_enabled;
+    uint8_t  temp_air_enabled;
+    uint8_t  hygr_enabled;
+    uint8_t  pressure_enabled;
     uint32_t sd_limit_bytes;
     uint32_t config_timeout_s;
 } Config;
@@ -129,8 +135,8 @@ typedef enum {
 } EventType;
 
 typedef enum {
-    BTN_RED = 0,    /* PC13 (existant) */
-    BTN_GREEN,      /* PA10 (à câbler) */
+    BTN_RED = 0,    /* PC13 / PB3 (Bouton Rouge) */
+    BTN_GREEN,      /* PA10 (Bouton Vert) */
     BTN_COUNT
 } ButtonId;
 
@@ -141,18 +147,24 @@ typedef struct {
     uint32_t  duration_ms;
 } Event;
 
-/* --- P1-3 : valeurs par défaut --- */
-#define CONFIG_DEFAULTS_INIT {           \
-    .log_interval_s    = 60,             \
-    .timeout_bme680_ms = 1000,           \
-    .timeout_light_ms  = 100,            \
-    .timeout_gps_ms    = 2000,           \
-    .timeout_rtc_ms    = 100,            \
-    .temp_min = -40.0f, .temp_max = 85.0f, \
-    .hum_min  = 0.0f,   .hum_max  = 100.0f, \
-    .press_min = 300.0f, .press_max = 1100.0f, \
-    .light_min = 0, .light_max = 4095,   \
-    .sd_limit_bytes   = 1048576,         \
-    .config_timeout_s = 1800             \
+/* --- P1-3 : valeurs par défaut (conformes au Cahier des Charges) --- */
+#define CONFIG_DEFAULTS_INIT {               \
+    .log_interval_s    = 60,                 \
+    .timeout_bme680_ms = 1000,               \
+    .timeout_light_ms  = 100,                \
+    .timeout_gps_ms    = 2000,               \
+    .timeout_rtc_ms    = 100,                \
+    .temp_min  = -10.0f, .temp_max  = 60.0f, \
+    .hum_min   = 0.0f,   .hum_max   = 100.0f,\
+    .hygr_mint = 0.0f,   .hygr_maxt = 50.0f, \
+    .press_min = 850.0f, .press_max = 1080.0f, \
+    .light_min = 0,      .light_max = 4095,  \
+    .lumin_low = 255,    .lumin_high = 768,  \
+    .lumin_enabled     = 1,                  \
+    .temp_air_enabled  = 1,                  \
+    .hygr_enabled      = 1,                  \
+    .pressure_enabled  = 1,                  \
+    .sd_limit_bytes    = 2048,               \
+    .config_timeout_s  = 1800                \
 }
 #endif

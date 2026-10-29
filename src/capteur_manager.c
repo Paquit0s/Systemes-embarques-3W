@@ -98,7 +98,7 @@ bool CapteurManager_Init(void)
 
     if (!GroveBME680_Init())
     {
-        printf("[WARN] BME680 non detecte au demarrage (nouvel essai a l'acquisition).\r\n");
+        printf("[WARN] BME680/BME280 non detecte au demarrage (nouvel essai a l'acquisition).\r\n");
     }
 
     /* P2-3 : Calibration matérielle ADC1 12 bits + configuration canal PA4 */
@@ -139,67 +139,100 @@ bool CapteurManager_Acquire(Mesure *out)
 
     BSP_Watchdog_Refresh();
 
-    /* --- 2. Capteur environnemental BME680 (T, HR, P) --- */
-    t0 = HAL_GetTick();
-    bool bme_ok = GroveBME680_ReadEnvironment(&m.env);
-    uint32_t bme_dt = HAL_GetTick() - t0;
-    if (!bme_ok || bme_dt > c->timeout_bme680_ms)
+    /* --- 2. Capteur environnemental BME680/BME280 (T, HR, P) --- */
+    bool want_bme = (c->temp_air_enabled != 0U) || (c->hygr_enabled != 0U) || (c->pressure_enabled != 0U);
+    if (!want_bme)
     {
         m.statut_temp  = STATUT_NA;
         m.statut_hum   = STATUT_NA;
         m.statut_press = STATUT_NA;
-        if (++s_to_bme >= 2U)
-        {
-            LedControl_ReportError(ERR_CAPTEUR_TIMEOUT, CAPTEUR_BME680);
-            printf("[ERR] BME680 : 2 timeouts consecutifs -> NA\r\n");
-        }
+        s_to_bme       = 0U;
     }
     else
     {
-        s_to_bme = 0U;
-        m.statut_temp  = statut_from_float(m.env.temp,  c->temp_min,  c->temp_max);
-        m.statut_hum   = statut_from_float(m.env.hum,   c->hum_min,   c->hum_max);
-        m.statut_press = statut_from_float(m.env.press, c->press_min, c->press_max);
-
-        if (m.statut_temp == STATUT_OK || m.statut_hum == STATUT_OK || m.statut_press == STATUT_OK)
+        t0 = HAL_GetTick();
+        bool bme_ok = GroveBME680_ReadEnvironment(&m.env);
+        uint32_t bme_dt = HAL_GetTick() - t0;
+        if (!bme_ok || bme_dt > c->timeout_bme680_ms)
         {
-            any_ok = true;
+            m.statut_temp  = STATUT_NA;
+            m.statut_hum   = STATUT_NA;
+            m.statut_press = STATUT_NA;
+            if (++s_to_bme >= 2U)
+            {
+                LedControl_ReportError(ERR_CAPTEUR_TIMEOUT, CAPTEUR_BME680);
+                printf("[ERR] BME : 2 timeouts consecutifs -> NA\r\n");
+            }
         }
-        if (m.statut_temp  == STATUT_INCOHERENT ||
-            m.statut_hum   == STATUT_INCOHERENT ||
-            m.statut_press == STATUT_INCOHERENT)
+        else
         {
-            LedControl_ReportError(ERR_CAPTEUR_INCOHERENT, CAPTEUR_BME680);
+            s_to_bme = 0U;
+            m.statut_temp  = (c->temp_air_enabled != 0U)
+                           ? statut_from_float(m.env.temp, c->temp_min, c->temp_max)
+                           : STATUT_NA;
+
+            /* Cahier des charges p.4 : HYGR_MINT / HYGR_MAXT = plage de température où l'hygrométrie est prise en compte */
+            if (c->hygr_enabled == 0U || m.env.temp < c->hygr_mint || m.env.temp > c->hygr_maxt)
+            {
+                m.statut_hum = STATUT_NA;
+            }
+            else
+            {
+                m.statut_hum = statut_from_float(m.env.hum, c->hum_min, c->hum_max);
+            }
+
+            m.statut_press = (c->pressure_enabled != 0U)
+                           ? statut_from_float(m.env.press, c->press_min, c->press_max)
+                           : STATUT_NA;
+
+            if (m.statut_temp == STATUT_OK || m.statut_hum == STATUT_OK || m.statut_press == STATUT_OK)
+            {
+                any_ok = true;
+            }
+            if (m.statut_temp  == STATUT_INCOHERENT ||
+                m.statut_hum   == STATUT_INCOHERENT ||
+                m.statut_press == STATUT_INCOHERENT)
+            {
+                LedControl_ReportError(ERR_CAPTEUR_INCOHERENT, CAPTEUR_BME680);
+            }
         }
     }
 
     BSP_Watchdog_Refresh();
 
     /* --- 3. Capteur de luminosité Grove Light (ADC 12 bits calibré : 0..4095, P2-3) --- */
-    t0 = HAL_GetTick();
-    bool light_ok = GroveLight_Read(&m.light);
-    uint32_t light_dt = HAL_GetTick() - t0;
-    if (!light_ok || light_dt > c->timeout_light_ms)
+    if (c->lumin_enabled == 0U)
     {
         m.statut_light = STATUT_NA;
-        if (++s_to_light >= 2U)
-        {
-            LedControl_ReportError(ERR_CAPTEUR_TIMEOUT, CAPTEUR_LIGHT);
-            printf("[ERR] Capteur lumiere : 2 timeouts consecutifs -> NA\r\n");
-        }
+        s_to_light     = 0U;
     }
     else
     {
-        s_to_light = 0U;
-        m.statut_light = (m.light < c->light_min || m.light > c->light_max)
-                       ? STATUT_INCOHERENT : STATUT_OK;
-        if (m.statut_light == STATUT_OK)
+        t0 = HAL_GetTick();
+        bool light_ok = GroveLight_Read(&m.light);
+        uint32_t light_dt = HAL_GetTick() - t0;
+        if (!light_ok || light_dt > c->timeout_light_ms)
         {
-            any_ok = true;
+            m.statut_light = STATUT_NA;
+            if (++s_to_light >= 2U)
+            {
+                LedControl_ReportError(ERR_CAPTEUR_TIMEOUT, CAPTEUR_LIGHT);
+                printf("[ERR] Capteur lumiere : 2 timeouts consecutifs -> NA\r\n");
+            }
         }
         else
         {
-            LedControl_ReportError(ERR_CAPTEUR_INCOHERENT, CAPTEUR_LIGHT);
+            s_to_light = 0U;
+            m.statut_light = (m.light < c->light_min || m.light > c->light_max)
+                           ? STATUT_INCOHERENT : STATUT_OK;
+            if (m.statut_light == STATUT_OK)
+            {
+                any_ok = true;
+            }
+            else
+            {
+                LedControl_ReportError(ERR_CAPTEUR_INCOHERENT, CAPTEUR_LIGHT);
+            }
         }
     }
 
@@ -231,7 +264,8 @@ bool CapteurManager_Acquire(Mesure *out)
     }
     else
     {
-        bool gps_frame_ok = GroveGPS_ReadGGA(&m.gps, c->timeout_gps_ms);
+        uint32_t gps_wait = (c->timeout_gps_ms > 300U) ? 300U : c->timeout_gps_ms;
+        bool gps_frame_ok = GroveGPS_ReadGGA(&m.gps, gps_wait);
         if (!gps_frame_ok)
         {
             m.statut_gps = STATUT_NA;

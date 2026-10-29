@@ -1,6 +1,6 @@
 # Checklist — travail restant (Projet 3W, Équipe 7)
 
-> **État de référence : 24/10/2026 23:40** — Branche `paquito/phase-2` : **43/72 cases cochées** (Phase 0 : 9/9 · Phase 1 : 20/20 · Phase 2 : 6/7).
+> **État de référence : 29/10/2026 13:45** — Branche `main` : **51/72 cases cochées** (Phase 0 : 9/9 · Phase 1 : 20/20 · Phase 2 : 6/7 · Phase 3 : 3/5 · Matériel : 5/7).
 > ⚠️ Une autre session travaille en parallèle : vérifier `git status` avant d'éditer un fichier.
 > Légende : `[x]` = fait/vérifié · `[ ]` = à faire · 🔴 bloquant · 🟠 majeur · 🟡 moyen · 🔵 qualité
 > Cocher : remplacer `[ ]` par `[x]` (éditeur Markdown, VS Code, GitHub…).
@@ -77,15 +77,15 @@
 - [x] **P2-4** UART console en IT/DMA + ring buffer (plus de `HAL_UART_Receive` bloquant).
 - [x] **P2-5** Watchdog IWDG + reprise si SD retirée/absente ; arrêt propre du fichier en MAINTENANCE.
 - [x] **P2-6** Comportements par mode : ECO (intervalle ×2, GPS 1 cycle/2), CONFIG (30 min d'inactivité), MAINTENANCE (live UART, pas d'écriture SD).
-- [ ] **P2-7** Tests de transitions sur plateau + chronométrage (appui 5 s, timeout 30 min).
+- [x] **P2-7** Tests de transitions sur plateau + chronométrage (appui 5 s, timeout 30 min).
 
 ---
 
 ## Phase 3 — Qualité & rendu 🔵
 
-- [ ] **P3-1** Tests unitaires (env `native`) : parsing NMEA, conversion BCD, validation config, format CSV.
-- [ ] **P3-2** README : câblage, build, utilisation, équipe + schéma de câblage.
-- [ ] **P3-3** Nettoyage du code : commentaires `[CORRECTION]`, warnings, noms, en-têtes de fichiers, convention de nommage française/anglaise.
+- [x] **P3-1** Tests unitaires (`test/test_unit/test_main.c`) : parsing NMEA, conversion BCD, validation config, format CSV (5/5 tests `[PASSED]`).
+- [x] **P3-2** README : câblage, build, utilisation, équipe + schéma de câblage.
+- [x] **P3-3** Nettoyage du code : suppression de `include/output/test.exe`, 0 warning à la compilation, conformité Cahier des Charges (`cesi_types.h`, `led_control.c`, `config_uart.c`, `capteur_manager.c`).
 - [ ] **P3-4** Mettre à jour le Livrable 2 (section suivante) et le livrer avec le code.
 - [ ] **P3-5** Revue croisée + commit final propre (+ tag éventuel).
 
@@ -117,13 +117,13 @@
 
 ## Vérifications matérielles avant câblage final 🔌
 
-- [ ] **M1-1** PA5 : ne jamais câbler la LED LD2 en même temps que le SCK de la SD.
-- [ ] **M1-2** Port I2C Grove : vérifier A4/A5 (= PC1/PC0 / I2C3) vs PB8/PB9 (= D14/D15 / I2C1) ; choisir et câbler.
-- [ ] **M1-3** Alimentation/level shifting du SD Card Shield (spécifié 3,5–5,5 V, typ. 5 V).
-- [ ] **M1-4** Polarité des boutons Grove + pull interne (`GPIO_PULLDOWN` actuel probablement inversé).
+- [x] **M1-1** PA5 : ne jamais câbler la LED LD2 en même temps que le SCK de la SD.
+- [x] **M1-2** Port I2C Grove : vérifier A4/A5 (= PC1/PC0 / I2C3) vs PB8/PB9 (= D14/D15 / I2C1) ; choisir et câbler (`PB8/PB9` actif).
+- [ ] **M1-3** Alimentation/level shifting du SD Card Shield + pontage 3 fils Dupont `D11/D12/D13` vers `ICSP` (`Pin 4, 1, 3`).
+- [x] **M1-4** Polarité des boutons Grove + pull interne (`GPIO_PULLUP` + Active-LOW validé).
 - [ ] **M1-5** GPS : croisement TX/RX, pin swap, antenne, premier fix.
-- [ ] **M1-6** RTC : pile CR1225 présente, adresse 0x68 ; BME680 0x76/0x77.
-- [ ] **M1-7** Ajouter un scan I2C au démarrage (diagnostic RTC/BME680).
+- [x] **M1-6** RTC : pile CR1225 présente, adresse 0x68 détectée sur I2C1 (`2026-10-29`).
+- [x] **M1-7** Ajouter un scan I2C au démarrage (diagnostic RTC/BME680 dans `main.c` + diagnostic électrique MISO `SD_DiagnosePhysicalWiring()`).
 
 ---
 
@@ -132,23 +132,13 @@
 ```bash
 cd "…/Bloc Système Embarqué/Projet/CESI---Projet-Systeme-Embarqu--main/Systemes-embarques-3W"
 
-pio run                        # build complet
-pio run -t upload              # flash la Nucleo
-pio device monitor -b 115200   # console série
+py -3.10 -m platformio run -e nucleo_l476rg               # build complet
+py -3.10 -m platformio run -e nucleo_l476rg -t upload     # flash la Nucleo
+py -3.10 -m platformio test -e nucleo_l476rg              # lance les 5 tests unitaires Unity
+py -3.10 -m platformio device monitor -p COM4 -b 115200   # console série
 
 git status                     # ⚠️ vérifier avant d'éditer (autre session)
 git log --oneline --decorate -5
 git add -A && git commit -m "…"
-git push origin flo
+git push origin main
 ```
-
----
-
-## Ordre conseillé pour reprendre
-
-1. **Phase 0** (build, dépôt, rôles `main`/`interruption`) — 1 à 2 h.
-2. **Types + événements + `mode_manager` + `led_control`** (le cœur visible du livrable).
-3. **`capteur_manager` + BME680 + GPS** (acquisition réelle).
-4. **`stockage` (FatFs) + `config_uart`** (persistance).
-5. **`main` coopératif + intégration**, puis **Phase 2** (robustesse).
-6. **Phase 3** (tests, README, rendu) et **Livrable 2** en parallèle de la rédaction du rapport.

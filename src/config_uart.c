@@ -9,8 +9,8 @@
 #include <stdlib.h>
 
 #define CONFIG_FLASH_ADDR  0x080FF800U  /* Dernière page 2 Ko (Flash 1 Mo STM32L476RG, Bank 2 Page 255/127) */
-#define CONFIG_MAGIC       0x33475754U  /* "3WGT" */
-#define FW_VERSION_STR     "3W-FW v2.0 (STM32L476RG @ 80 MHz)"
+#define CONFIG_MAGIC       0x33574732U  /* "3WG2" */
+#define FW_VERSION_STR     "3W-FW v2.0 (STM32L476RG @ 80 MHz) - Lot #2026-3W-EQ7"
 
 typedef struct {
     uint32_t magic;
@@ -166,7 +166,7 @@ const Config *ConfigUART_Get(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Parseur de commandes console (HELP/GET/SET/SAVE/VERSION/DEFAULTS/SETRTC) */
+/* Parseur de commandes console (Cahier des charges + SET/GET/HELP)    */
 /* ------------------------------------------------------------------ */
 
 static void print(const char *s)
@@ -176,31 +176,35 @@ static void print(const char *s)
 
 static void print_help(void)
 {
-    print("\r\nCommandes disponibles :\r\n"
+    print("\r\nCommandes disponibles (Cahier des Charges & Console) :\r\n"
           "  HELP                         : Affiche cette aide\r\n"
-          "  VERSION                      : Affiche la version du firmware\r\n"
-          "  GET <param|ALL>              : Lit un ou tous les parametres\r\n"
-          "  SET <param> <value>          : Modifie un parametre en RAM\r\n"
-          "  DEFAULTS                     : Restaure les parametres par defaut\r\n"
+          "  VERSION                      : Version du programme et numero de lot\r\n"
+          "  RESET / DEFAULTS             : Reinitialise les parametres par defaut\r\n"
           "  SAVE                         : Sauvegarde la configuration en Flash\r\n"
-          "  SETRTC YYYY-MM-DD HH:MM:SS   : Met a l'heure l'horloge RTC DS1307\r\n"
-          "  EXIT / QUIT                  : Quitte la configuration et passe en STANDARD\r\n"
-          "Parametres :\r\n"
-          "  log_interval (5..3600 s), timeout_bme680 (100..5000 ms),\r\n"
-          "  timeout_light (10..1000 ms), timeout_gps (500..10000 ms),\r\n"
-          "  timeout_rtc (10..1000 ms), temp_min/temp_max (-40..85 C),\r\n"
-          "  hum_min/hum_max (0..100 %), press_min/press_max (300..1100 hPa),\r\n"
-          "  light_min/light_max (0..4095), sd_limit (>=1024 octets),\r\n"
-          "  config_timeout (10..86400 s, defaut=1800 s / 30 min)\r\n");
+          "  GET <param|ALL>              : Lit un ou tous les parametres\r\n"
+          "  SET <param> <value>          : Modifie un parametre\r\n"
+          "  LOG_INTERVALL=<min>          : Intervalle entre 2 mesures (en min, ou sec via SET)\r\n"
+          "  FILE_MAX_SIZE=<octets>       : Taille max d'un fichier .LOG (defaut 2048)\r\n"
+          "  TIMEOUT=<sec>                : Timeout d'acquisition capteur en s (defaut 30)\r\n"
+          "  LUMIN=<0|1> / LUMIN_LOW=<0..1023> / LUMIN_HIGH=<0..1023>\r\n"
+          "  TEMP_AIR=<0|1> / MIN_TEMP_AIR=<-40..85> / MAX_TEMP_AIR=<-40..85>\r\n"
+          "  HYGR=<0|1> / HYGR_MINT=<-40..85> / HYGR_MAXT=<-40..85>\r\n"
+          "  PRESSURE=<0|1> / PRESSURE_MIN=<300..1100> / PRESSURE_MAX=<300..1100>\r\n"
+          "  CLOCK=HH:MM:SS               : Configure l'heure RTC\r\n"
+          "  DATE=MM,DD,YYYY              : Configure la date RTC (Mois,Jour,Annee)\r\n"
+          "  DAY=<MON..SUN>               : Configure le jour de la semaine RTC\r\n"
+          "  SETRTC YYYY-MM-DD HH:MM:SS   : Met a l'heure date+heure RTC en une commande\r\n"
+          "  EXIT / QUIT                  : Quitte la configuration -> mode STANDARD\r\n");
 }
 
 static void print_all_params(void)
 {
-    char buf[160];
+    char buf[220];
     snprintf(buf, sizeof(buf),
-             "log_interval=%lu s\r\ntimeout_bme680=%lu ms\r\ntimeout_light=%lu ms\r\n"
-             "timeout_gps=%lu ms\r\ntimeout_rtc=%lu ms\r\n",
+             "log_interval=%lu s\r\nfile_max_size=%lu B\r\ntimeout_bme680=%lu ms\r\n"
+             "timeout_light=%lu ms\r\ntimeout_gps=%lu ms\r\ntimeout_rtc=%lu ms\r\n",
              (unsigned long)s_cfg.log_interval_s,
+             (unsigned long)s_cfg.sd_limit_bytes,
              (unsigned long)s_cfg.timeout_bme680_ms,
              (unsigned long)s_cfg.timeout_light_ms,
              (unsigned long)s_cfg.timeout_gps_ms,
@@ -208,13 +212,17 @@ static void print_all_params(void)
     print(buf);
 
     snprintf(buf, sizeof(buf),
-             "temp=[%.2f..%.2f] C\r\nhum=[%.2f..%.2f] %%\r\npress=[%.2f..%.2f] hPa\r\n"
-             "light=[%u..%u]\r\nsd_limit=%lu B\r\nconfig_timeout=%lu s\r\n",
+             "LUMIN=%u (LOW=%u, HIGH=%u)\r\nTEMP_AIR=%u [%.1f..%.1f C]\r\n"
+             "HYGR=%u [MINT=%.1f..MAXT=%.1f C]\r\nPRESSURE=%u [%.1f..%.1f hPa]\r\n"
+             "config_timeout=%lu s\r\n",
+             (unsigned int)s_cfg.lumin_enabled,
+             (unsigned int)s_cfg.lumin_low, (unsigned int)s_cfg.lumin_high,
+             (unsigned int)s_cfg.temp_air_enabled,
              (double)s_cfg.temp_min, (double)s_cfg.temp_max,
-             (double)s_cfg.hum_min, (double)s_cfg.hum_max,
+             (unsigned int)s_cfg.hygr_enabled,
+             (double)s_cfg.hygr_mint, (double)s_cfg.hygr_maxt,
+             (unsigned int)s_cfg.pressure_enabled,
              (double)s_cfg.press_min, (double)s_cfg.press_max,
-             (unsigned int)s_cfg.light_min, (unsigned int)s_cfg.light_max,
-             (unsigned long)s_cfg.sd_limit_bytes,
              (unsigned long)s_cfg.config_timeout_s);
     print(buf);
 }
@@ -223,21 +231,29 @@ static void cmd_get(const char *p)
 {
     char buf[48];
     if      (!strcasecmp(p, "ALL"))            { print_all_params(); }
-    else if (!strcmp(p, "log_interval"))       { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.log_interval_s); print(buf); }
-    else if (!strcmp(p, "timeout_bme680"))     { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_bme680_ms); print(buf); }
-    else if (!strcmp(p, "timeout_light"))      { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_light_ms); print(buf); }
-    else if (!strcmp(p, "timeout_gps"))        { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_gps_ms); print(buf); }
-    else if (!strcmp(p, "timeout_rtc"))        { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_rtc_ms); print(buf); }
-    else if (!strcmp(p, "temp_min"))           { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.temp_min); print(buf); }
-    else if (!strcmp(p, "temp_max"))           { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.temp_max); print(buf); }
-    else if (!strcmp(p, "hum_min"))            { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.hum_min); print(buf); }
-    else if (!strcmp(p, "hum_max"))            { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.hum_max); print(buf); }
-    else if (!strcmp(p, "press_min"))          { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.press_min); print(buf); }
-    else if (!strcmp(p, "press_max"))          { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.press_max); print(buf); }
-    else if (!strcmp(p, "light_min"))          { snprintf(buf, 48, "%u\r\n", s_cfg.light_min); print(buf); }
-    else if (!strcmp(p, "light_max"))          { snprintf(buf, 48, "%u\r\n", s_cfg.light_max); print(buf); }
-    else if (!strcmp(p, "sd_limit"))           { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.sd_limit_bytes); print(buf); }
-    else if (!strcmp(p, "config_timeout"))     { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.config_timeout_s); print(buf); }
+    else if (!strcasecmp(p, "log_interval") || !strcasecmp(p, "LOG_INTERVALL")) { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.log_interval_s); print(buf); }
+    else if (!strcasecmp(p, "timeout_bme680")) { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_bme680_ms); print(buf); }
+    else if (!strcasecmp(p, "timeout_light"))  { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_light_ms); print(buf); }
+    else if (!strcasecmp(p, "timeout_gps"))    { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_gps_ms); print(buf); }
+    else if (!strcasecmp(p, "timeout_rtc"))    { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.timeout_rtc_ms); print(buf); }
+    else if (!strcasecmp(p, "temp_min") || !strcasecmp(p, "MIN_TEMP_AIR")) { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.temp_min); print(buf); }
+    else if (!strcasecmp(p, "temp_max") || !strcasecmp(p, "MAX_TEMP_AIR")) { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.temp_max); print(buf); }
+    else if (!strcasecmp(p, "hum_min"))        { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.hum_min); print(buf); }
+    else if (!strcasecmp(p, "hum_max"))        { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.hum_max); print(buf); }
+    else if (!strcasecmp(p, "hygr_mint"))      { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.hygr_mint); print(buf); }
+    else if (!strcasecmp(p, "hygr_maxt"))      { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.hygr_maxt); print(buf); }
+    else if (!strcasecmp(p, "press_min") || !strcasecmp(p, "PRESSURE_MIN")) { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.press_min); print(buf); }
+    else if (!strcasecmp(p, "press_max") || !strcasecmp(p, "PRESSURE_MAX")) { snprintf(buf, 48, "%.2f\r\n", (double)s_cfg.press_max); print(buf); }
+    else if (!strcasecmp(p, "light_min"))      { snprintf(buf, 48, "%u\r\n", s_cfg.light_min); print(buf); }
+    else if (!strcasecmp(p, "light_max"))      { snprintf(buf, 48, "%u\r\n", s_cfg.light_max); print(buf); }
+    else if (!strcasecmp(p, "lumin_low"))      { snprintf(buf, 48, "%u\r\n", s_cfg.lumin_low); print(buf); }
+    else if (!strcasecmp(p, "lumin_high"))     { snprintf(buf, 48, "%u\r\n", s_cfg.lumin_high); print(buf); }
+    else if (!strcasecmp(p, "lumin"))          { snprintf(buf, 48, "%u\r\n", s_cfg.lumin_enabled); print(buf); }
+    else if (!strcasecmp(p, "temp_air"))       { snprintf(buf, 48, "%u\r\n", s_cfg.temp_air_enabled); print(buf); }
+    else if (!strcasecmp(p, "hygr"))           { snprintf(buf, 48, "%u\r\n", s_cfg.hygr_enabled); print(buf); }
+    else if (!strcasecmp(p, "pressure"))       { snprintf(buf, 48, "%u\r\n", s_cfg.pressure_enabled); print(buf); }
+    else if (!strcasecmp(p, "sd_limit") || !strcasecmp(p, "FILE_MAX_SIZE")) { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.sd_limit_bytes); print(buf); }
+    else if (!strcasecmp(p, "config_timeout")) { snprintf(buf, 48, "%lu\r\n", (unsigned long)s_cfg.config_timeout_s); print(buf); }
     else print("ERR parametre inconnu\r\n");
 }
 
@@ -245,7 +261,7 @@ static bool set_u32(const char *v, uint32_t *dst, uint32_t lo, uint32_t hi)
 {
     char *end;
     unsigned long x = strtoul(v, &end, 10);
-    if (*end || x < lo || x > hi) return false;
+    if (end == v || *end || x < lo || x > hi) return false;
     *dst = (uint32_t)x;
     return true;
 }
@@ -254,8 +270,17 @@ static bool set_u16(const char *v, uint16_t *dst, uint16_t lo, uint16_t hi)
 {
     char *end;
     unsigned long x = strtoul(v, &end, 10);
-    if (*end || x < lo || x > hi) return false;
+    if (end == v || *end || x < lo || x > hi) return false;
     *dst = (uint16_t)x;
+    return true;
+}
+
+static bool set_u8(const char *v, uint8_t *dst, uint8_t lo, uint8_t hi)
+{
+    char *end;
+    unsigned long x = strtoul(v, &end, 10);
+    if (end == v || *end || x < lo || x > hi) return false;
+    *dst = (uint8_t)x;
     return true;
 }
 
@@ -263,29 +288,117 @@ static bool set_f32(const char *v, float *dst, float lo, float hi)
 {
     char *end;
     float x = strtof(v, &end);
-    if (*end || x < lo || x > hi) return false;
+    if (end == v || *end || x < lo || x > hi) return false;
     *dst = x;
     return true;
 }
 
 static bool cmd_set(const char *p, const char *v)
 {
-    if (!strcmp(p, "log_interval"))   return set_u32(v, &s_cfg.log_interval_s, 5U, 3600U);
-    if (!strcmp(p, "timeout_bme680")) return set_u32(v, &s_cfg.timeout_bme680_ms, 100U, 5000U);
-    if (!strcmp(p, "timeout_light"))  return set_u32(v, &s_cfg.timeout_light_ms, 10U, 1000U);
-    if (!strcmp(p, "timeout_gps"))    return set_u32(v, &s_cfg.timeout_gps_ms, 500U, 10000U);
-    if (!strcmp(p, "timeout_rtc"))    return set_u32(v, &s_cfg.timeout_rtc_ms, 10U, 1000U);
-    if (!strcmp(p, "temp_min"))       return set_f32(v, &s_cfg.temp_min, -40.0f, 85.0f);
-    if (!strcmp(p, "temp_max"))       return set_f32(v, &s_cfg.temp_max, -40.0f, 85.0f);
-    if (!strcmp(p, "hum_min"))        return set_f32(v, &s_cfg.hum_min, 0.0f, 100.0f);
-    if (!strcmp(p, "hum_max"))        return set_f32(v, &s_cfg.hum_max, 0.0f, 100.0f);
-    if (!strcmp(p, "press_min"))      return set_f32(v, &s_cfg.press_min, 300.0f, 1100.0f);
-    if (!strcmp(p, "press_max"))      return set_f32(v, &s_cfg.press_max, 300.0f, 1100.0f);
-    if (!strcmp(p, "light_min"))      return set_u16(v, &s_cfg.light_min, 0U, 4095U);
-    if (!strcmp(p, "light_max"))      return set_u16(v, &s_cfg.light_max, 0U, 4095U);
-    if (!strcmp(p, "sd_limit"))       return set_u32(v, &s_cfg.sd_limit_bytes, 1024U, 0xFFFFFFFFU);
-    if (!strcmp(p, "config_timeout")) return set_u32(v, &s_cfg.config_timeout_s, 10U, 86400U);
+    if (!strcasecmp(p, "log_interval"))   return set_u32(v, &s_cfg.log_interval_s, 1U, 86400U);
+    if (!strcasecmp(p, "LOG_INTERVALL"))
+    {
+        /* Dans le PDF : LOG_INTERVALL=10 est exprimé en minutes (ou secondes si > 60) */
+        uint32_t val = 0U;
+        if (!set_u32(v, &val, 1U, 1440U)) return false;
+        s_cfg.log_interval_s = val * 60U;
+        return true;
+    }
+    if (!strcasecmp(p, "TIMEOUT"))
+    {
+        uint32_t sec = 0U;
+        if (!set_u32(v, &sec, 1U, 300U)) return false;
+        s_cfg.timeout_bme680_ms = sec * 1000U;
+        s_cfg.timeout_gps_ms    = sec * 1000U;
+        return true;
+    }
+    if (!strcasecmp(p, "timeout_bme680")) return set_u32(v, &s_cfg.timeout_bme680_ms, 100U, 60000U);
+    if (!strcasecmp(p, "timeout_light"))  return set_u32(v, &s_cfg.timeout_light_ms, 10U, 10000U);
+    if (!strcasecmp(p, "timeout_gps"))    return set_u32(v, &s_cfg.timeout_gps_ms, 500U, 60000U);
+    if (!strcasecmp(p, "timeout_rtc"))    return set_u32(v, &s_cfg.timeout_rtc_ms, 10U, 10000U);
+    if (!strcasecmp(p, "temp_min") || !strcasecmp(p, "MIN_TEMP_AIR")) return set_f32(v, &s_cfg.temp_min, -40.0f, 85.0f);
+    if (!strcasecmp(p, "temp_max") || !strcasecmp(p, "MAX_TEMP_AIR")) return set_f32(v, &s_cfg.temp_max, -40.0f, 85.0f);
+    if (!strcasecmp(p, "hum_min"))        return set_f32(v, &s_cfg.hum_min, 0.0f, 100.0f);
+    if (!strcasecmp(p, "hum_max"))        return set_f32(v, &s_cfg.hum_max, 0.0f, 100.0f);
+    if (!strcasecmp(p, "hygr_mint"))      return set_f32(v, &s_cfg.hygr_mint, -40.0f, 85.0f);
+    if (!strcasecmp(p, "hygr_maxt"))      return set_f32(v, &s_cfg.hygr_maxt, -40.0f, 85.0f);
+    if (!strcasecmp(p, "press_min") || !strcasecmp(p, "PRESSURE_MIN")) return set_f32(v, &s_cfg.press_min, 300.0f, 1100.0f);
+    if (!strcasecmp(p, "press_max") || !strcasecmp(p, "PRESSURE_MAX")) return set_f32(v, &s_cfg.press_max, 300.0f, 1100.0f);
+    if (!strcasecmp(p, "light_min"))      return set_u16(v, &s_cfg.light_min, 0U, 4095U);
+    if (!strcasecmp(p, "light_max"))      return set_u16(v, &s_cfg.light_max, 0U, 4095U);
+    if (!strcasecmp(p, "lumin_low"))      return set_u16(v, &s_cfg.lumin_low, 0U, 1023U);
+    if (!strcasecmp(p, "lumin_high"))     return set_u16(v, &s_cfg.lumin_high, 0U, 1023U);
+    if (!strcasecmp(p, "lumin"))          return set_u8(v, &s_cfg.lumin_enabled, 0U, 1U);
+    if (!strcasecmp(p, "temp_air"))       return set_u8(v, &s_cfg.temp_air_enabled, 0U, 1U);
+    if (!strcasecmp(p, "hygr"))           return set_u8(v, &s_cfg.hygr_enabled, 0U, 1U);
+    if (!strcasecmp(p, "pressure"))       return set_u8(v, &s_cfg.pressure_enabled, 0U, 1U);
+    if (!strcasecmp(p, "sd_limit") || !strcasecmp(p, "FILE_MAX_SIZE")) return set_u32(v, &s_cfg.sd_limit_bytes, 256U, 0xFFFFFFFFU);
+    if (!strcasecmp(p, "config_timeout")) return set_u32(v, &s_cfg.config_timeout_s, 10U, 86400U);
     return false;
+}
+
+static void read_or_default_rtc(RTC_DateTime *dt)
+{
+    if (!GroveRTC_GetDateTime(dt) || dt->year < 2000U)
+    {
+        dt->year      = 2026U;
+        dt->month     = 1U;
+        dt->day       = 1U;
+        dt->dayOfWeek = 1U;
+        dt->hours     = 0U;
+        dt->minutes   = 0U;
+        dt->seconds   = 0U;
+    }
+}
+
+static bool cmd_clock(const char *time_s)
+{
+    if (!time_s) return false;
+    unsigned int hh = 0, mm = 0, ss = 0;
+    if (sscanf(time_s, "%u:%u:%u", &hh, &mm, &ss) != 3) return false;
+    if (hh > 23U || mm > 59U || ss > 59U) return false;
+
+    RTC_DateTime dt;
+    read_or_default_rtc(&dt);
+    dt.hours   = (uint8_t)hh;
+    dt.minutes = (uint8_t)mm;
+    dt.seconds = (uint8_t)ss;
+    return GroveRTC_SetDateTime(&dt);
+}
+
+static bool cmd_date(const char *date_s)
+{
+    if (!date_s) return false;
+    unsigned int mo = 0, dy = 0, yr = 0;
+    /* Format PDF page 5 : MOIS{1-12},JOUR{1-31},ANNEE{2000-2099} */
+    if (sscanf(date_s, "%u,%u,%u", &mo, &dy, &yr) != 3) return false;
+    if (mo < 1U || mo > 12U || dy < 1U || dy > 31U || yr < 2000U || yr > 2099U) return false;
+
+    RTC_DateTime dt;
+    read_or_default_rtc(&dt);
+    dt.month = (uint8_t)mo;
+    dt.day   = (uint8_t)dy;
+    dt.year  = (uint16_t)yr;
+    return GroveRTC_SetDateTime(&dt);
+}
+
+static bool cmd_day(const char *day_s)
+{
+    if (!day_s) return false;
+    uint8_t dow = 0U;
+    if      (!strcasecmp(day_s, "MON")) dow = 1U;
+    else if (!strcasecmp(day_s, "TUE")) dow = 2U;
+    else if (!strcasecmp(day_s, "WED")) dow = 3U;
+    else if (!strcasecmp(day_s, "THU")) dow = 4U;
+    else if (!strcasecmp(day_s, "FRI")) dow = 5U;
+    else if (!strcasecmp(day_s, "SAT")) dow = 6U;
+    else if (!strcasecmp(day_s, "SUN")) dow = 7U;
+    else return false;
+
+    RTC_DateTime dt;
+    read_or_default_rtc(&dt);
+    dt.dayOfWeek = dow;
+    return GroveRTC_SetDateTime(&dt);
 }
 
 static bool cmd_setrtc(const char *date_s, const char *time_s)
@@ -311,12 +424,49 @@ static bool cmd_setrtc(const char *date_s, const char *time_s)
 
 static void process_line(char *line)
 {
+    /* P2-6 : Toute commande reçue en mode CONFIGURATION réinitialise le timer d'inactivité (30 min) */
+    ModeManager_NotifyActivity();
+
+    /* Support de la syntaxe directe du Cahier des Charges : CLE=VALEUR (ex: LOG_INTERVALL=10, CLOCK=14:30:00) */
+    char *eq = strchr(line, '=');
+    if (eq != NULL)
+    {
+        *eq = '\0';
+        char *key = line;
+        char *val = eq + 1;
+        while (*key == ' ' || *key == '\t') key++;
+        while (*val == ' ' || *val == '\t') val++;
+
+        if (!strcasecmp(key, "CLOCK"))
+        {
+            print(cmd_clock(val) ? "OK CLOCK\r\n" : "ERR CLOCK (format HH:MM:SS)\r\n");
+            return;
+        }
+        if (!strcasecmp(key, "DATE"))
+        {
+            print(cmd_date(val) ? "OK DATE\r\n" : "ERR DATE (format MM,DD,YYYY)\r\n");
+            return;
+        }
+        if (!strcasecmp(key, "DAY"))
+        {
+            print(cmd_day(val) ? "OK DAY\r\n" : "ERR DAY (MON..SUN)\r\n");
+            return;
+        }
+        if (cmd_set(key, val))
+        {
+            (void)ConfigUART_Save();
+            print("OK\r\n");
+        }
+        else
+        {
+            print("ERR parametre ou valeur hors domaine\r\n");
+        }
+        return;
+    }
+
     char *save = NULL;
     char *cmd = strtok_r(line, " \t", &save);
     if (!cmd) return;
-
-    /* P2-6 : Toute commande reçue en mode CONFIGURATION réinitialise le timer d'inactivité (30 min) */
-    ModeManager_NotifyActivity();
 
     if (!strcasecmp(cmd, "HELP"))
     {
@@ -328,11 +478,12 @@ static void process_line(char *line)
         print(FW_VERSION_STR "\r\n");
         return;
     }
-    if (!strcasecmp(cmd, "DEFAULTS"))
+    if (!strcasecmp(cmd, "DEFAULTS") || !strcasecmp(cmd, "RESET"))
     {
         Config def = CONFIG_DEFAULTS_INIT;
         s_cfg = def;
-        print("OK parametres par defaut restaures (tapez SAVE pour enregistrer)\r\n");
+        (void)ConfigUART_Save();
+        print("OK parametres par defaut restaures et sauvegardes\r\n");
         return;
     }
     if (!strcasecmp(cmd, "SAVE"))
@@ -357,6 +508,24 @@ static void process_line(char *line)
             return;
         }
         print(cmd_set(p, v) ? "OK\r\n" : "ERR valeur hors domaine\r\n");
+        return;
+    }
+    if (!strcasecmp(cmd, "CLOCK"))
+    {
+        char *t = strtok_r(NULL, " \t", &save);
+        print(cmd_clock(t) ? "OK CLOCK\r\n" : "ERR CLOCK (format HH:MM:SS)\r\n");
+        return;
+    }
+    if (!strcasecmp(cmd, "DATE"))
+    {
+        char *d = strtok_r(NULL, " \t", &save);
+        print(cmd_date(d) ? "OK DATE\r\n" : "ERR DATE (format MM,DD,YYYY)\r\n");
+        return;
+    }
+    if (!strcasecmp(cmd, "DAY"))
+    {
+        char *d = strtok_r(NULL, " \t", &save);
+        print(cmd_day(d) ? "OK DAY\r\n" : "ERR DAY (MON..SUN)\r\n");
         return;
     }
     if (!strcasecmp(cmd, "SETRTC"))

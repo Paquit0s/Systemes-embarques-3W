@@ -97,7 +97,7 @@ static void MX_I2C1_Init(void)
 }
 
 /**
- * @brief Initialisation du bus SPI1 (PA5=SCK, PA6=MISO, PA7=MOSI, PB5=CS)
+ * @brief Initialisation du bus SPI1 (PA5=SCK, PA6=MISO, PA7=MOSI, PB5=D4 CS, PB6=D10 CS)
  * @note  PA5 est strictement réservée à SPI1_SCK (ne jamais utiliser LD2).
  *        P2-1 / P2-2 : À 80 MHz, PRESCALER_256 donne 312,5 kHz (<= 400 kHz pour init SD).
  */
@@ -108,14 +108,14 @@ static void MX_SPI1_Init(void)
 
     GPIO_InitTypeDef gpio = {0};
 
-    gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_7; /* PA5 SCK, PA7 MOSI */
+    gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_7; /* PA5 SCK (D13), PA7 MOSI (D11) */
     gpio.Mode      = GPIO_MODE_AF_PP;
     gpio.Pull      = GPIO_NOPULL;
     gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
     gpio.Alternate = GPIO_AF5_SPI1;
     HAL_GPIO_Init(GPIOA, &gpio);
 
-    gpio.Pin       = GPIO_PIN_6; /* PA6 MISO (pull-up requis quand CS est haut) */
+    gpio.Pin       = GPIO_PIN_6; /* PA6 MISO (D12, pull-up requis quand CS est haut) */
     gpio.Mode      = GPIO_MODE_AF_PP;
     gpio.Pull      = GPIO_PULLUP;
     gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
@@ -123,12 +123,12 @@ static void MX_SPI1_Init(void)
     HAL_GPIO_Init(GPIOA, &gpio);
 
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    gpio.Pin   = SD_CS_PIN;
+    gpio.Pin   = SD_CS_PIN | GPIO_PIN_6; /* PB5 (D4) et PB6 (D10 / SS matériel Arduino) */
     gpio.Mode  = GPIO_MODE_OUTPUT_PP;
     gpio.Pull  = GPIO_NOPULL;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(SD_CS_PORT, &gpio);
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN | GPIO_PIN_6, GPIO_PIN_SET);
 
     hspi1.Instance               = SPI1;
     hspi1.Init.Mode              = SPI_MODE_MASTER;

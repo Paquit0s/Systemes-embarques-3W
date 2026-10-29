@@ -12,7 +12,7 @@ static struct {
 
 void ModeManager_Init(void)
 {
-    /* Au démarrage : vérifie que le bouton rouge est VRAIMENT maintenu (> 200 ms) */
+    /* Au démarrage : vérifie que le bouton rouge est maintenu (> 200 ms) */
     bool held = false;
     if (Interruption_IsHeld(BTN_RED))
     {
@@ -85,10 +85,12 @@ static void on_event(const Event *e)
             }
         }
     }
-    /* 2. Bouton ROUGE (B1 Nucleo PC13) */
+    /* 2. Bouton ROUGE (D3 / PB3 ou B1 Nucleo PC13) */
     else if (e->button == BTN_RED)
     {
-        /* P1-8 & P2-7 : Entrée ET sortie de MAINTENANCE nécessitent un appui long de 5 secondes */
+        /* P1-8 & P2-7 : Entrée/sortie de MAINTENANCE ou sortie manuelle de CONFIGURATION
+         * nécessitent un appui long de 5 secondes (EVENT_BTN_LONG), afin que le relâchement
+         * du bouton rouge après le boot en CONFIGURATION ne fasse jamais quitter le mode. */
         if (e->type == EVENT_BTN_LONG)
         {
             if (s_mm.current == MODE_STANDARD || s_mm.current == MODE_ECO)
@@ -99,12 +101,10 @@ static void on_event(const Event *e)
             {
                 (void)ModeManager_RequestMode(s_mm.previous);
             }
-        }
-        /* Sortie de CONFIGURATION : appui sur bouton rouge pour retour immédiat en STANDARD */
-        else if (s_mm.current == MODE_CONFIGURATION &&
-                 (e->type == EVENT_BTN_LONG || e->type == EVENT_BTN_RELEASE))
-        {
-            (void)ModeManager_RequestMode(MODE_STANDARD);
+            else if (s_mm.current == MODE_CONFIGURATION)
+            {
+                (void)ModeManager_RequestMode(MODE_STANDARD);
+            }
         }
     }
 }

@@ -4,11 +4,11 @@
 #include <stdio.h>
 
 /* --- Mapping matériel des boutons (Base Shield Grove + Nucleo-L476RG) ---
- *  - BTN_GREEN : PA10 (Port Grove D2), actif à l'état HAUT (pull-down).
- *  - BTN_RED   : 
- *      1. PB3 (Port Grove D3 ou D2 Signal2 du Dual Button), actif à l'état HAUT.
- *      2. PB4 (Port Grove D5), actif à l'état HAUT.
- *      3. PA9 (Port Grove D8), actif à l'état HAUT.
+ *  - BTN_GREEN : PA10 (Port Grove D2), actif à l'état BAS (pull-up).
+ *  - BTN_RED   :
+ *      1. PB3 (Port Grove D3), actif à l'état BAS (pull-up).
+ *      2. PB4 (Port Grove D5), actif à l'état BAS (pull-up).
+ *      3. PA9 (Port Grove D8), actif à l'état BAS (pull-up).
  *      4. PC13 (B1 utilisateur Nucleo), actif à l'état BAS (pull-up).
  */
 #define BTN_ENABLE_GROVE_RED    1
@@ -29,6 +29,7 @@ typedef struct {
     uint32_t          edge_tick;
     uint32_t          press_tick;
     bool              long_fired;
+    bool              boot_held;
     volatile bool     edge_flag;
     volatile uint32_t isr_tick;
 } BtnCtx;
@@ -88,7 +89,7 @@ static void push_event(EventType t, ButtonId id, uint32_t tick, uint32_t dur)
     {
         if (id == BTN_RED)
         {
-            printf("[BTN] Appui detecte sur bouton ROUGE (maintenez 5s pour Mode MAINTENANCE)...\r\n");
+            printf("[BTN] Appui detecte sur bouton ROUGE (maintenez 5s pour changer de mode)...\r\n");
         }
         else
         {
@@ -184,12 +185,14 @@ void Interruption_Init(void)
             s_btn[i].state      = BS_PRESSED;
             s_btn[i].press_tick = now;
             s_btn[i].long_fired = true;
+            s_btn[i].boot_held  = true; /* Maintenu dès le reset : ignorer le relâchement initial */
         }
         else
         {
             s_btn[i].state      = BS_IDLE;
             s_btn[i].press_tick = 0U;
             s_btn[i].long_fired = false;
+            s_btn[i].boot_held  = false;
         }
     }
 }
@@ -273,6 +276,7 @@ void Interruption_Update(uint32_t now)
                 b->state      = BS_PRESSED;
                 b->press_tick = now;
                 b->long_fired = false;
+                b->boot_held  = false;
                 push_event(EVENT_BTN_PRESS, (ButtonId)i, now, 0U);
             }
             break;
@@ -298,7 +302,16 @@ void Interruption_Update(uint32_t now)
             else if ((now - b->edge_tick) >= DEBOUNCE_MS)
             {
                 uint32_t dur = now - b->press_tick;
-                push_event(EVENT_BTN_RELEASE, (ButtonId)i, now, dur);
+                if (b->boot_held)
+                {
+                    /* Relâchement de l'appui initial au boot (entrée en CONFIGURATION) :
+                     * on n'émet pas d'événement RELEASE qui ferait quitter le mode ! */
+                    b->boot_held = false;
+                }
+                else
+                {
+                    push_event(EVENT_BTN_RELEASE, (ButtonId)i, now, dur);
+                }
                 b->state = BS_IDLE;
             }
             break;

@@ -34,7 +34,8 @@ static SDLoggerInitStatus g_init_status = SDLOGGER_INIT_ERR_CMD0;
 static uint8_t g_active_cs_index = 0;
 
 static const SDChipSelect g_cs_candidates[] = {
-    {SD_CS_PORT, SD_CS_PIN, "D4/PB5"}
+    {SD_CS_PORT, SD_CS_PIN,  "D4/PB5"},
+    {GPIOB,      GPIO_PIN_6, "D10/PB6"}
 };
 
 #define SD_CS_CANDIDATE_COUNT ((uint8_t)(sizeof(g_cs_candidates) / sizeof(g_cs_candidates[0])))
@@ -154,6 +155,40 @@ static uint8_t SD_SendCommand(uint8_t cmd, uint32_t arg, uint8_t crc)
     return response;
 }
 
+/**
+ * @brief Vérifie si la broche MISO (PA6 / D12) est physiquement reliée au lecteur SD
+ *        ou si elle est flottante (en l'air).
+ */
+static void SD_DiagnosePhysicalWiring(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+
+    /* Test avec pull-down interne (40 kOhm) sur PA6 (D12 / MISO) */
+    gpio.Pin       = GPIO_PIN_6;
+    gpio.Mode      = GPIO_MODE_INPUT;
+    gpio.Pull      = GPIO_PULLDOWN;
+    gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
+    HAL_GPIO_Init(GPIOA, &gpio);
+    HAL_Delay(2U);
+    int miso_pd = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET) ? 1 : 0;
+
+    /* Restauration en AF5 SPI1_MISO avec pull-up interne */
+    gpio.Mode      = GPIO_MODE_AF_PP;
+    gpio.Pull      = GPIO_PULLUP;
+    gpio.Alternate = GPIO_AF5_SPI1;
+    HAL_GPIO_Init(GPIOA, &gpio);
+    HAL_Delay(1U);
+    int miso_pu = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET) ? 1 : 0;
+
+    printf("[SD diag] Test ligne MISO (D12/PA6): PullUp=%d, PullDown=%d\r\n", miso_pu, miso_pd);
+    if (miso_pu == 1 && miso_pd == 0)
+    {
+        printf("[SD ALERTE MATERIELLE] La broche D12 (MISO/PA6) est FLOTTANTE (non reliee au SD Shield) !\r\n");
+        printf("[SD ALERTE MATERIELLE] -> Sur Nucleo-L476RG, il n'y a pas de connecteur ICSP 6 broches.\r\n");
+        printf("[SD ALERTE MATERIELLE] -> Pontez avec 3 fils Dupont : D11->ICSP_MOSI(pin4), D12->ICSP_MISO(pin1), D13->ICSP_SCK(pin3).\r\n");
+    }
+}
+
 bool SDLogger_Init(void)
 {
     uint8_t cs_index;
@@ -169,6 +204,8 @@ bool SDLogger_Init(void)
 
     g_card_type = SDLOGGER_CARD_UNKNOWN;
     g_init_status = SDLOGGER_INIT_ERR_CMD0;
+
+    SD_DiagnosePhysicalWiring();
 
     /* P2-2 : Basse fréquence SPI pendant l'initialisation (<= 400 kHz : 80 MHz / 256 = 312.5 kHz) */
     (void)BSP_SPI1_SetPrescaler(SPI_BAUDRATEPRESCALER_256);
